@@ -1,0 +1,184 @@
+//! Integration: a WebSocket client playing the Viewer against the real Sender
+//! stack (mock decks -> session -> transport) on localhost.
+
+use std::time::Duration;
+
+use futures_util::{SinkExt, StreamExt};
+use tandem_core::protocol::chunk::{decode_chunk, WaveformKind};
+use tandem_core::protocol::{Message, Role, PROTOCOL_VERSION};
+use tandem_core::sender::MockSender;
+use tokio::net::TcpStream;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+
+type Client = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+const WAIT: Duration = Duration::from_secs(5);
+
+async fn connect(port: u16) -> Client {
+    let (client, _response) = connect_async(format!("ws://127.0.0.1:{port}")).await.expect("connects");
+    client
+}
+
+#[allow(clippy::useless_conversion)] // identity with tungstenite 0.24, a conversion with newer versions
+async fn send(client: &mut Client, message: &Message) {
+    client.send(WsMessage::Text(message.to_json().into())).await.expect("sends");
+}
+
+/// The next frame, or a panic after `WAIT`. Text frames are parsed.
+async fn next(client: &mut Client) -> Result<Message, Vec<u8>> {
+    loop {
+        let frame = tokio::time::timeout(WAIT, client.next())
+            .await
+            .expect("a frame arrives in time")
+            .expect("the connection is open")
+            .expect("the frame is valid");
+        match frame {
+            WsMessage::Text(text) => return Ok(Message::parse(text.as_str()).expect("the Sender sends valid messages")),
+            WsMessage::Binary(bytes) => return Err(bytes.to_vec()),
+            _ => continue,
+        }
+    }
+}
+
+/// Reads frames until `wanted` returns something, skipping the rest.
+async fn until<T>(client: &mut Client, mut wanted: impl FnMut(&Result<Message, Vec<u8>>) -> Option<T>) -> T {
+    loop {
+        let frame = next(client).await;
+        if let Some(found) = wanted(&frame) {
+            return found;
+        }
+    }
+}
+
+fn viewer_hello(protocol: u32) -> Message {
+    Message::Hello {
+        protocol,
+        device_id: "test-viewer".to_string(),
+        name: "Test Viewer".to_string(),
+        role: Role::Viewer,
+        app_version: "0.1.0".to_string(),
+        os: "test".to_string(),
+    }
+}
+
+#[tokio::test]
+async fn a_viewer_gets_snapshot_waveform_live_state_and_pongs() {
+    let sender = MockSender::start(0, 2, false).await.expect("sender starts");
+    sender.command("load 1 1").expect("load");
+
+    let mut client = connect(sender.port()).await;
+    send(&mut client, &viewer_hello(PROTOCOL_VERSION)).await;
+
+    // Handshake and snapshot, in the documented order.
+    assert!(matches!(next(&mut client).await, Ok(Message::Hello { role: Role::Sender, protocol: PROTOCOL_VERSION, .. })));
+    assert!(matches!(next(&mut client).await, Ok(Message::SourceStatus { decks: 2, connected: true, .. })));
+    let (frames, waveform_id) = match next(&mut client).await {
+        Ok(Message::DeckLoaded { deck: 1, track, waveform: Some(info) }) => {
+            assert_eq!(track.title, "Neon Tide");
+            assert_eq!(track.bpm_original, 124.0);
+            (info.frames as usize, info.waveform_id)
+        }
+        other => panic!("expected deck_loaded, got {other:?}"),
+    };
+    assert_eq!(frames, 55_860);
+
+    // Waveform: overview first, then the full detail.
+    let mut overview = 0usize;
+    let mut detail = 0usize;
+    while detail < frames * 3 {
+        let bytes = next(&mut client).await.expect_err("binary frames follow deck_loaded");
+        let chunk = decode_chunk(&bytes).expect("valid chunk");
+        assert_eq!(chunk.waveform_id, waveform_id);
+        match chunk.kind {
+            WaveformKind::Overview => {
+                assert_eq!(detail, 0, "overview must come first");
+                assert_eq!(chunk.offset as usize, overview);
+                overview += chunk.payload.len();
+            }
+            WaveformKind::Detail => {
+                assert_eq!(chunk.offset as usize, detail);
+                detail += chunk.payload.len();
+            }
+        }
+    }
+    assert_eq!(overview, 3600);
+    assert!(matches!(next(&mut client).await, Ok(Message::DeckState { deck: 1, playing: false, .. })));
+    assert_eq!(sender.info().viewers, 1);
+
+    // Live: play, then positions that advance and timestamps that increase.
+    sender.command("play 1").expect("play");
+    let mut playing = |frame: &Result<Message, Vec<u8>>| match frame {
+        Ok(Message::DeckState { deck: 1, playing: true, is_master: true, ts, pos_s, .. }) => Some((*ts, *pos_s)),
+        _ => None,
+    };
+    let (ts_a, pos_a) = until(&mut client, &mut playing).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    sender.command("pitch 1 10").expect("pitch");
+    let (ts_b, pos_b, bpm_b) = until(&mut client, |frame| match frame {
+        Ok(Message::DeckState { deck: 1, ts, pos_s, bpm_current, .. }) if (*bpm_current - 136.4).abs() < 1e-6 => {
+            Some((*ts, *pos_s, *bpm_current))
+        }
+        _ => None,
+    })
+    .await;
+    assert!(ts_b > ts_a && pos_b > pos_a, "{ts_a}->{ts_b}, {pos_a}->{pos_b}");
+    assert!((bpm_b - 136.4).abs() < 1e-6);
+
+    // Clock sync: a ping is answered with our timestamp echoed.
+    send(&mut client, &Message::Ping { t_viewer: 12.5 }).await;
+    let t_sender = until(&mut client, |frame| match frame {
+        Ok(Message::Pong { t_viewer, t_sender }) if *t_viewer == 12.5 => Some(*t_sender),
+        _ => None,
+    })
+    .await;
+    assert!(t_sender >= ts_b);
+
+    // Eject reaches the Viewer; an invalid command is an error, not a crash.
+    sender.command("eject 1").expect("eject");
+    until(&mut client, |frame| matches!(frame, Ok(Message::DeckUnloaded { deck: 1 })).then_some(())).await;
+    assert!(sender.command("play 1").is_err());
+    assert!(sender.command("warp 9").is_err());
+
+    // Heartbeats keep coming while nothing plays.
+    until(&mut client, |frame| matches!(frame, Ok(Message::Heartbeat { .. })).then_some(())).await;
+
+    sender.stop().await;
+}
+
+#[tokio::test]
+async fn garbage_and_wrong_versions_are_handled() {
+    let sender = MockSender::start(0, 2, false).await.expect("sender starts");
+    let mut client = connect(sender.port()).await;
+
+    // Garbage is ignored; a ping before hello is still answered.
+    client.send(WsMessage::Text("not json".to_string().into())).await.expect("sends");
+    client.send(WsMessage::Binary(vec![1u8, 2, 3].into())).await.expect("sends");
+    send(&mut client, &Message::Ping { t_viewer: 1.0 }).await;
+    assert!(matches!(next(&mut client).await, Ok(Message::Pong { .. })));
+
+    // A Viewer from the future is told why it is refused.
+    send(&mut client, &viewer_hello(99)).await;
+    match next(&mut client).await {
+        Ok(Message::Error { code, .. }) => assert_eq!(code, "protocol_mismatch"),
+        other => panic!("expected an error, got {other:?}"),
+    }
+    assert_eq!(sender.info().viewers, 0);
+
+    // The Sender is still fine for the next Viewer.
+    let mut second = connect(sender.port()).await;
+    send(&mut second, &viewer_hello(PROTOCOL_VERSION)).await;
+    assert!(matches!(next(&mut second).await, Ok(Message::Hello { .. })));
+
+    sender.stop().await;
+}
+
+#[tokio::test]
+async fn the_port_is_free_again_after_stop() {
+    let sender = MockSender::start(0, 2, false).await.expect("sender starts");
+    let port = sender.port();
+    assert!(MockSender::start(port, 2, false).await.is_err(), "port is taken while running");
+    sender.stop().await;
+    let again = MockSender::start(port, 2, false).await.expect("port is free after stop");
+    again.stop().await;
+}

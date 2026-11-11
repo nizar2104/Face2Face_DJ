@@ -1,0 +1,12 @@
+{"type":"hello","protocol":1,"device_id":"0b5c6f0e-8a4e-4e59-9d0c-3f6f1f1c2a10","name":"DJ A MacBook","role":"sender","app_version":"0.1.0","os":"macos"}
+{"type":"hello","protocol":1,"device_id":"7d1f3f52-0a55-4b0e-b9a7-5f0f4f6f9e21","name":"DJ B ThinkPad","role":"viewer","app_version":"0.1.0","os":"windows"}
+{"type":"source_status","software":"rekordbox","software_version":"7.2.18","connected":true,"decks":4,"reader":"rkbx_link","reader_status":"running"}
+{"type":"deck_loaded","deck":1,"track":{"track_id":"mock-1a2b3c4d","title":"Neon Tide","artist":"Mara Voss","album":"Mock Sessions","duration_s":372.4,"bpm_original":124.0,"key":{"camelot":"8A","musical":"Am"},"file_name":"Mara Voss - Neon Tide.flac","local":true,"resolve_status":"ok"},"waveform":{"waveform_id":"mockwf-1a2b3c4d","detail_fps":150,"frames":55860,"status":"ready"}}
+{"type":"deck_loaded","deck":2,"track":{"track_id":"stream-42","title":"Cloud Song","artist":"Somebody","album":"","duration_s":201.5,"bpm_original":128.0,"key":null,"file_name":"","local":false,"resolve_status":"not_local"},"waveform":null}
+{"type":"deck_state","deck":1,"ts":123456.789,"pos_s":64.512,"bpm_current":126.0,"playing":true,"is_master":true,"on_air":true}
+{"type":"deck_unloaded","deck":2}
+{"type":"waveform_status","waveform_id":"mockwf-1a2b3c4d","status":"analysing","progress":0.4}
+{"type":"ping","t_viewer":1000.123}
+{"type":"pong","t_viewer":1000.123,"t_sender":5000.456}
+{"type":"heartbeat","ts":5001.5}
+{"type":"error","code":"rkbx_link_not_running","message":"The Rekordbox deck reader is not running."}

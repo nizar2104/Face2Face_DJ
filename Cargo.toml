@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/tandem-core", "app/src-tauri"]
+# `cargo test` at the repo root builds only the core, which needs no webview
+# libraries. The desktop shell is built through `npm run tauri`.
+default-members = ["crates/tandem-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+publish = false

@@ -1,0 +1,20 @@
+# Tandem mock session: timed mock-sender commands, "<seconds> <command>".
+# Read by tools/mock-sender (TypeScript) and by MockSource in tandem-core (Rust).
+# It walks through everything Milestone 0 has to show: load, play, pitch change,
+# loop jump, pause, master change and eject. "restart" loops it.
+
+0     load 1
+0     load 2
+1     play 1
+6     pitch 1 1.6129     # 124.00 -> 126.00 BPM
+10    play 2
+14    jump 1 -16         # loop jump: back 4 bars
+18    pause 1
+18    master 2
+22    play 1
+26    eject 2
+29    load 2
+32    play 2
+36    pitch 2 -1.5
+40    jump 2 32
+44    restart

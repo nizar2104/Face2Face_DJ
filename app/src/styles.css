@@ -1,0 +1,477 @@
+/* Tandem: dark, dense, readable at arm's length in a booth. Default window 480x220. */
+
+:root {
+  --bg: #0b0d10;
+  --panel: #12151a;
+  --line: #1f242c;
+  --text: #e8eaed;
+  --dim: #9aa4b2;
+  --faint: #59616e;
+  --good: #34c759;
+  --bad: #ff453a;
+  --master: #ffd60a;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1.2 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+code {
+  font-family: ui-monospace, 'Cascadia Mono', Menlo, monospace;
+  color: var(--text);
+}
+
+/* ---- Viewer shell ------------------------------------------------------ */
+
+.viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.status,
+.sender-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 20px;
+  padding: 0 6px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.status-from,
+.sender-status {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-software {
+  color: var(--dim);
+}
+
+.controls {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.seg {
+  display: inline-flex;
+}
+
+.seg button,
+.seg-single {
+  height: 16px;
+  min-width: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--dim);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.seg button + button {
+  border-left: 0;
+}
+
+.seg button:first-child,
+.seg-single {
+  border-radius: 3px 0 0 3px;
+}
+
+.seg button:last-child,
+.seg-single {
+  border-radius: 0 3px 3px 0;
+}
+
+.seg-single {
+  border-radius: 3px;
+}
+
+.seg button:hover,
+.seg-single:hover {
+  color: var(--text);
+}
+
+.seg button.on,
+.seg-single.on {
+  background: #2a313c;
+  color: var(--text);
+}
+
+.link {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.link-up .dot {
+  color: var(--good);
+}
+
+.link-down .dot {
+  color: var(--bad);
+}
+
+.banner {
+  flex: none;
+  padding: 2px 6px;
+  background: #3a1d1b;
+  color: #ffb4ae;
+  font-size: 11px;
+  text-align: center;
+}
+
+.banner-warn {
+  background: #3a3115;
+  color: #ffe08a;
+}
+
+.fullscreen-notice {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 16px;
+  text-align: center;
+}
+
+.fullscreen-notice p {
+  margin: 0;
+}
+
+.notice-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.notice-detail,
+.notice {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.text-button {
+  margin-top: 4px;
+  padding: 3px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+}
+
+/* ---- Decks ------------------------------------------------------------- */
+
+.decks {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 1px;
+  background: var(--line);
+}
+
+.decks-1 {
+  grid-template: 1fr / 1fr;
+}
+
+.decks-2 {
+  grid-template: 1fr 1fr / 1fr;
+}
+
+.decks-4 {
+  grid-template: 1fr 1fr / 1fr 1fr;
+}
+
+.viewer-stale .decks {
+  filter: grayscale(1);
+  opacity: 0.5;
+}
+
+.deck {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  min-height: 0;
+  padding: 3px 6px 4px;
+  background: var(--bg);
+}
+
+.deck-master {
+  box-shadow: inset 2px 0 0 var(--master);
+}
+
+.deck-empty {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.deck-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.deck-no {
+  color: var(--dim);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.play-state {
+  width: 12px;
+  text-align: center;
+}
+
+.is-playing {
+  color: var(--good);
+}
+
+.is-paused {
+  color: var(--dim);
+}
+
+.badge {
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+}
+
+.badge-master {
+  background: var(--master);
+  color: #111;
+}
+
+.badge-air {
+  border-color: #3a414d;
+  color: var(--faint);
+}
+
+.badge-air.on {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.track {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+.track-title {
+  font-weight: 600;
+}
+
+.track-artist {
+  color: var(--dim);
+}
+
+.deck-numbers {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* In a narrow card (4-deck layout) the BPM extras are clipped first, never the key or the time. */
+.bpm {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.bpm-current,
+.key,
+.remain {
+  flex: none;
+}
+
+.bpm-current {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.bpm-unit,
+.bpm-original,
+.key-other {
+  color: var(--dim);
+  font-size: 10px;
+}
+
+.bpm-unit {
+  margin-left: 3px;
+}
+
+.bpm-original {
+  margin-left: 6px;
+}
+
+.key {
+  margin-left: auto;
+}
+
+.key-main {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.key-other {
+  margin-left: 4px;
+}
+
+.key-missing {
+  color: var(--faint);
+}
+
+.remain {
+  min-width: 50px;
+  font-size: 16px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.wave {
+  flex: 1;
+  min-height: 14px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.overview {
+  flex: none;
+  height: 10px;
+  position: relative;
+}
+
+.wave-canvas,
+.overview-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.overview-canvas {
+  border-radius: 2px;
+  background: var(--panel);
+}
+
+/* ---- Sender (Milestone 0: mock controls + preview) --------------------- */
+
+.sender {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.sender .viewer {
+  flex: 1;
+  height: auto;
+}
+
+/* ---- Role selection ---------------------------------------------------- */
+
+.role-select {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 20px;
+  text-align: center;
+}
+
+.role-select h1 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: 0.02em;
+}
+
+.role-select p {
+  margin: 0;
+  max-width: 420px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.role-select b {
+  color: var(--text);
+}
+
+.role-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.role-buttons button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 150px;
+  padding: 10px 14px;
+  border: 1px solid #2a313c;
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.role-buttons button:hover {
+  border-color: #4a5566;
+  background: #1a1f27;
+}
+
+.role-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.role-hint {
+  color: var(--dim);
+  font-size: 10px;
+}
