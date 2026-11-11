@@ -1,0 +1,25 @@
+{
+  "name": "face2face-dj",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "workspaces": [
+    "app",
+    "tools/mock-sender"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w app",
+    "build": "npm run build -w app",
+    "tauri": "npm run tauri -w app --",
+    "mock-sender": "node tools/mock-sender/main.ts",
+    "test": "node --test \"app/src/**/*.test.ts\" \"tools/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "~5.8.3"
+  }
+}

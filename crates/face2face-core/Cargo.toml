@@ -1,0 +1,15 @@
+[package]
+name = "face2face-core"
+description = "Face2Face DJ core: protocol, sources, waveforms and networking. No UI dependencies."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow = "1"
+futures-util = { version = "0.3", features = ["sink"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = "0.24"
+tracing = "0.1"
