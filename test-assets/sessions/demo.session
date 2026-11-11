@@ -1,5 +1,5 @@
-# Tandem mock session: timed mock-sender commands, "<seconds> <command>".
-# Read by tools/mock-sender (TypeScript) and by MockSource in tandem-core (Rust).
+# Face2Face DJ mock session: timed mock-sender commands, "<seconds> <command>".
+# Read by tools/mock-sender (TypeScript) and by MockSource in face2face-core (Rust).
 # It walks through everything Milestone 0 has to show: load, play, pitch change,
 # loop jump, pause, master change and eject. "restart" loops it.
 

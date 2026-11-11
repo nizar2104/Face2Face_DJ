@@ -19,11 +19,11 @@ export function isTauri(): boolean {
 
 function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const tauri = window.__TAURI__;
-  if (tauri === undefined) return Promise.reject(new Error('Not running in the Tandem desktop app.'));
+  if (tauri === undefined) return Promise.reject(new Error('Not running in the Face2Face DJ desktop app.'));
   return tauri.core.invoke<T>(cmd, args);
 }
 
-/** Mirrors `SenderInfo` in crates/tandem-core/src/sender.rs. */
+/** Mirrors `SenderInfo` in crates/face2face-core/src/sender.rs. */
 export interface SenderInfo {
   port: number;
   decks: number;

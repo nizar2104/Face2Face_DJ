@@ -39,7 +39,7 @@ fn identity() -> SenderIdentity {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     SenderIdentity {
         device_id: format!("sender-{:x}-{:x}", std::process::id(), nanos),
-        name: "Tandem Sender (mock decks)".to_string(),
+        name: "Face2Face DJ Sender (mock decks)".to_string(),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         os: std::env::consts::OS.to_string(),
     }
@@ -54,7 +54,7 @@ impl MockSender {
     pub async fn start(port: u16, deck_count: u8, demo: bool) -> anyhow::Result<Self> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
             .await
-            .with_context(|| format!("could not listen on 127.0.0.1:{port} (is another Tandem Sender running?)"))?;
+            .with_context(|| format!("could not listen on 127.0.0.1:{port} (is another Face2Face DJ Sender running?)"))?;
         let port = listener.local_addr()?.port();
 
         let session = Session::new();

@@ -1,4 +1,4 @@
-// CLI: a mock Tandem Sender for developing and testing the Viewer without
+// CLI: a mock Face2Face DJ Sender for developing and testing the Viewer without
 // Rekordbox, Traktor or the desktop app.
 //
 //   npm run mock-sender                  scripted demo on ws://127.0.0.1:47801
@@ -46,7 +46,7 @@ const sender = new MockSender({
 });
 
 const bound = await sender.start();
-console.log(`Tandem mock sender on ws://${values.host}:${bound} (${decks} decks, demo ${values['no-demo'] ? 'off' : 'on'})`);
+console.log(`Face2Face DJ mock sender on ws://${values.host}:${bound} (${decks} decks, demo ${values['no-demo'] ? 'off' : 'on'})`);
 if (values.host !== '127.0.0.1' && values.host !== 'localhost') {
   console.log('Warning: there is no pairing yet, so anyone who can reach this address can connect.');
 }

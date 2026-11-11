@@ -1,4 +1,4 @@
-//! Tandem core. Everything that is not UI lives here, so it can be tested
+//! Face2Face DJ core. Everything that is not UI lives here, so it can be tested
 //! without a webview and reused by command-line tools.
 //!
 //! Milestone 0 contents: the wire protocol, a mock deck source, synthetic

@@ -4,9 +4,9 @@
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use tandem_core::protocol::chunk::{decode_chunk, WaveformKind};
-use tandem_core::protocol::{Message, Role, PROTOCOL_VERSION};
-use tandem_core::sender::MockSender;
+use face2face_core::protocol::chunk::{decode_chunk, WaveformKind};
+use face2face_core::protocol::{Message, Role, PROTOCOL_VERSION};
+use face2face_core::sender::MockSender;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};

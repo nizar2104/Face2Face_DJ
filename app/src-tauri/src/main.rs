@@ -1,11 +1,11 @@
-// Tandem desktop shell. All logic lives in `tandem-core`; this file only
+// Face2Face DJ desktop shell. All logic lives in `face2face-core`; this file only
 // exposes it to the UI as Tauri commands (see app/src/tauri.ts).
 
 // No console window on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tandem_core::protocol::DEFAULT_PORT;
-use tandem_core::sender::{MockSender, SenderInfo};
+use face2face_core::protocol::DEFAULT_PORT;
+use face2face_core::sender::{MockSender, SenderInfo};
 use tauri::State;
 use tokio::sync::Mutex;
 
@@ -47,7 +47,7 @@ async fn sender_status(state: State<'_, AppState>) -> Result<Option<SenderInfo>,
     Ok(sender.as_ref().map(MockSender::info))
 }
 
-/// Runs one mock-deck command, e.g. "play 1" (vocabulary in tandem-core's `sources::mock`).
+/// Runs one mock-deck command, e.g. "play 1" (vocabulary in face2face-core's `sources::mock`).
 #[tauri::command]
 async fn mock_command(state: State<'_, AppState>, command: String) -> Result<(), String> {
     let sender = state.sender.lock().await;
@@ -63,5 +63,5 @@ fn main() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![start_sender, stop_sender, sender_status, mock_command])
         .run(tauri::generate_context!())
-        .expect("error while running Tandem");
+        .expect("error while running Face2Face DJ");
 }

@@ -1,6 +1,6 @@
-# Tandem protocol, version 1
+# Face2Face DJ protocol, version 1
 
-Status: Milestone 0. Implemented by `crates/tandem-core/src/protocol/` (Rust),
+Status: Milestone 0. Implemented by `crates/face2face-core/src/protocol/` (Rust),
 `app/src/protocol/messages.ts` (TypeScript) and `tools/mock-sender/`. Both
 implementations are tested against the fixtures in `test-assets/protocol/`.
 Change this document, the fixtures and both implementations together.

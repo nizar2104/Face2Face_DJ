@@ -20,7 +20,7 @@ export function StatusBar({ store, settings, onChange, onSwitchRole }: Props) {
   const connected = store.connection === 'connected';
   const latency = store.clock.latencyMs;
   const source = store.source;
-  const from = store.sender !== null ? `From ${store.sender.name}` : 'Tandem';
+  const from = store.sender !== null ? `From ${store.sender.name}` : 'Face2Face DJ';
   const software = source !== null ? ` · ${source.software} ${source.software_version}` : '';
 
   return (

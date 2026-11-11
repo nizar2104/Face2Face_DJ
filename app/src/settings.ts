@@ -15,7 +15,7 @@ export interface Settings {
 }
 
 const DEFAULTS: Settings = { notation: 'camelot', layout: 'auto', zoomS: 8 };
-const STORAGE_KEY = 'tandem.viewer.settings';
+const STORAGE_KEY = 'face2face-dj.viewer.settings';
 
 function load(): Settings {
   try {

@@ -1,8 +1,30 @@
-# Tandem
+# Face2Face DJ
 
-Links two DJ laptops in the same booth: the **Viewer** (computer 2) shows the
-waveform, BPM, key, time and status of the decks on the **Sender** (computer 1).
-Scope and design: `docs/PROJECT_BRIEF.md`.
+**See your back-to-back partner's decks on your own screen.**
+
+When two DJs play back-to-back (B2B) from two laptops in the same booth, each one
+can only see their own software. Face2Face DJ links the two laptops over the local
+network: the **Sender** (computer 1) reads the state of its DJ software's decks and
+streams it; the **Viewer** (computer 2) shows it in a small always-on-top window:
+scrolling waveform, current and original BPM, musical key (Camelot and standard notation),
+remaining time, play/pause, master and on-air status, for up to four decks.
+So the incoming DJ can see what is playing, where the phrase ends and what key and
+tempo to mix into, without leaning over the other laptop.
+
+How it works, briefly:
+
+- **One WebSocket per pair.** JSON messages for track loads and deck state (60 Hz per
+  deck), binary frames for waveform data, a 1 Hz heartbeat. Spec: [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+- **Clock sync + interpolation.** The Viewer estimates the Sender's clock from
+  ping/pong round trips and extrapolates each deck's position between updates, so
+  the waveform scrolls smoothly and stays in time with the real deck.
+- **Read-only by design.** It never writes to a DJ library or to music files.
+- **Planned sources:** Rekordbox (via rkbx_link) and Traktor. Milestone 0 uses mock
+  decks with synthetic waveforms.
+
+Built with Tauri 2: a Rust core (protocol, deck sources, waveforms, networking)
+and a TypeScript + React UI drawing on Canvas 2D. Design decisions are logged in
+[`docs/DECISIONS.md`](docs/DECISIONS.md). The project's working name was *Tandem*.
 
 ## Status: Milestone 0 (foundations, one computer)
 
@@ -13,7 +35,8 @@ discovery or pairing yet; the Sender listens on localhost only.
 |---|---|
 | Viewer UI, clock sync, interpolation, reconnect (TypeScript) | Built and tested |
 | Mock sender tool (TypeScript) | Built and tested |
-| Rust core (`crates/tandem-core`) and Tauri shell (`app/src-tauri`) | **Written, never compiled.** The environment Milestone 0 was written in had no Rust toolchain. Run `cargo test` first and expect to fix compile errors. |
+| Rust core (`crates/face2face-core`) | Compiles without warnings; `cargo test` passes (30 tests) |
+| Tauri shell (`app/src-tauri`) | Written, not yet compiled: needs the Tauri prerequisites (webview libraries) for your OS |
 
 ![Viewer with two mock decks](docs/screenshots/viewer-two-decks.png)
 
@@ -45,8 +68,8 @@ The mock sender takes commands on its terminal while it runs: `help` lists them
 **As the desktop app.**
 
 ```sh
-cargo test              # Rust core tests; do this first (see Status)
-npm run tauri dev       # opens the Tandem window
+cargo test              # Rust core tests
+npm run tauri dev       # opens the Face2Face DJ window
 ```
 
 Choose **Share my decks**: the window starts the Rust Sender with mock decks,
@@ -75,15 +98,15 @@ app/                  the desktop app
     waveform/         canvas drawing
     views/            RoleSelect, Viewer, Sender
     components/       DeckCard, WaveformView, StatusBar, KeyBadge
-  src-tauri/          Tauri shell: commands that call tandem-core
-crates/tandem-core/   Rust core: protocol, sources (mock), waveform (synthetic),
-                      session, net (transport), sender
+  src-tauri/          Tauri shell: commands that call face2face-core
+crates/face2face-core/  Rust core: protocol, sources (mock), waveform (synthetic),
+                        session, net (transport), sender
 tools/mock-sender/    stand-in Sender for developing the Viewer
 test-assets/          fixtures shared by the TypeScript and Rust tests
 ```
 
 ## Safety rules that already apply
 
-Tandem never writes to a DJ library or to music files (brief, section 12).
+Face2Face DJ never writes to a DJ library or to music files (brief, section 12).
 Milestone 0 reads and writes nothing outside this folder and the browser's or
 webview's own local storage (three display settings and a device id).

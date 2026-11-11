@@ -105,3 +105,11 @@ of them. They become `Option` together with the first source that needs it (M4),
 so the inference rules are written against real data.
 
 **D19. The mock deck has no mixer: `on_air` equals `playing`.**
+
+## After Milestone 0
+
+**D20. The project is named Face2Face DJ; "Tandem" was the working name.**
+Renamed everywhere except this log and the file name of the original brief:
+crate `face2face-core`, app crate `face2face-dj`, npm packages `@face2face-dj/*`,
+Tauri identifier `app.face2facedj.desktop`, local-storage keys `face2face-dj.*`.
+The wire protocol is unchanged (no name appears in it).

@@ -4,7 +4,7 @@ export type Role = 'sender' | 'viewer';
 export function RoleSelect({ onChoose }: { onChoose: (role: Role) => void }) {
   return (
     <div className="role-select">
-      <h1>Tandem</h1>
+      <h1>Face2Face DJ</h1>
       <p>
         On the computer running Rekordbox or Traktor, choose <b>Share my decks</b>. On the other computer, choose{' '}
         <b>View partner</b>.

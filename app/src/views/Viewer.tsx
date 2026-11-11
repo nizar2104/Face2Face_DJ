@@ -9,7 +9,7 @@ import { ViewerStore } from '../state/store.ts';
 import { APP_VERSION } from '../version.ts';
 
 function deviceId(): string {
-  const key = 'tandem.deviceId';
+  const key = 'face2face-dj.deviceId';
   const make = (): string =>
     typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `viewer-${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
   try {
@@ -58,7 +58,7 @@ export function Viewer({ senderUrl, onSwitchRole }: Props) {
     const conn = new ViewerConnection(store, {
       url: senderUrl,
       deviceId: deviceId(),
-      name: 'Tandem Viewer',
+      name: 'Face2Face DJ Viewer',
       appVersion: APP_VERSION,
       os: osName(),
     });

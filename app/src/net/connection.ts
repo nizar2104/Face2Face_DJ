@@ -116,7 +116,7 @@ export class ViewerConnection {
           this.store.setError({
             type: 'error',
             code: 'protocol_mismatch',
-            message: `Sender speaks protocol ${msg.protocol}, this Viewer speaks ${PROTOCOL_VERSION}. Update Tandem on both computers.`,
+            message: `Sender speaks protocol ${msg.protocol}, this Viewer speaks ${PROTOCOL_VERSION}. Update Face2Face DJ on both computers.`,
           });
           this.dropped();
           return;

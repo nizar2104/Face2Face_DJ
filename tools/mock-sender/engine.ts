@@ -1,6 +1,6 @@
 // Simulated DJ decks. No I/O and no clock: the caller applies commands and
 // advances time, and gets back the events a real source adapter would produce.
-// The Rust twin is crates/tandem-core/src/sources/mock.rs; keep the command
+// The Rust twin is crates/face2face-core/src/sources/mock.rs; keep the command
 // vocabulary and the rules below identical in both.
 
 export interface MockTrack {

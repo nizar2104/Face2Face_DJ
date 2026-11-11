@@ -2,7 +2,7 @@
 // 150 frames per second, 3 bytes per frame (low, mid, high), plus a
 // 1,200-point overview. The shape imitates a dance track (kick on the beat,
 // 16-bar sections, a breakdown) so scrolling and tempo are easy to judge by eye.
-// The Rust twin is crates/tandem-core/src/waveform/synth.rs.
+// The Rust twin is crates/face2face-core/src/waveform/synth.rs.
 
 import { BYTES_PER_FRAME, DETAIL_FPS, OVERVIEW_POINTS } from '../../app/src/protocol/messages.ts';
 

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Tandem",
+  "productName": "Face2Face DJ",
   "version": "0.1.0",
-  "identifier": "app.tandem.desktop",
+  "identifier": "app.face2facedj.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Tandem",
+        "title": "Face2Face DJ",
         "width": 480,
         "height": 220,
         "minWidth": 360,

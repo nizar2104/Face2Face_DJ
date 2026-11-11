@@ -1,6 +1,6 @@
 [package]
-name = "tandem-core"
-description = "Tandem core: protocol, sources, waveforms and networking. No UI dependencies."
+name = "face2face-core"
+description = "Face2Face DJ core: protocol, sources, waveforms and networking. No UI dependencies."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

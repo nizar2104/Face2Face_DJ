@@ -1,6 +1,6 @@
 [package]
-name = "tandem"
-description = "Tandem desktop app (Tauri shell around tandem-core)"
+name = "face2face-dj"
+description = "Face2Face DJ desktop app (Tauri shell around face2face-core)"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -9,7 +9,7 @@ publish.workspace = true
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tandem-core = { path = "../../crates/tandem-core" }
+face2face-core = { path = "../../crates/face2face-core" }
 tauri = { version = "2", features = [] }
 tokio = { version = "1", features = ["sync"] }
 tracing-subscriber = "0.3"

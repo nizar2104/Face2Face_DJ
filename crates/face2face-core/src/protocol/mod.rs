@@ -1,4 +1,4 @@
-//! Tandem wire protocol v1. Source of truth: `docs/PROTOCOL.md`.
+//! Face2Face DJ wire protocol v1. Source of truth: `docs/PROTOCOL.md`.
 //! The TypeScript mirror is `app/src/protocol/messages.ts`; both are tested
 //! against the shared fixtures in `test-assets/protocol/`.
 

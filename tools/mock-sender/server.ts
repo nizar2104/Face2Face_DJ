@@ -1,4 +1,4 @@
-// A stand-in Sender: simulated decks behind the real Tandem protocol
+// A stand-in Sender: simulated decks behind the real Face2Face DJ protocol
 // (docs/PROTOCOL.md). The Viewer cannot tell it from the desktop app's Sender.
 
 import { WebSocketServer } from 'ws';

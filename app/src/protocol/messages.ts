@@ -1,5 +1,5 @@
-// Tandem wire protocol v1. Source of truth: docs/PROTOCOL.md.
-// The Rust mirror of this file is crates/tandem-core/src/protocol/.
+// Face2Face DJ wire protocol v1. Source of truth: docs/PROTOCOL.md.
+// The Rust mirror of this file is crates/face2face-core/src/protocol/.
 // This module has no DOM or Node dependencies: the Viewer UI, the mock sender
 // and the tests all import it.
 
