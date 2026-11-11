@@ -134,3 +134,15 @@ own software. Revisit when: someone wants both on one screen.
 `app/public/nomad-logo.png` is made from it: cropped, with the dark background
 turned into transparency. The app icons (`app/src-tauri/icons`) are still the
 Milestone 0 placeholders; the logo is a wide wordmark and does not fit a square.
+
+**D23. In a browser, the dev server stands in for the Rust side (development bridge).**
+Until now a browser could only view; sharing needed the desktop app, so the
+two-way mode could not be tried without a Rust and Tauri build. Now
+`tools/mock-sender/dev-bridge.ts`, a Vite dev-server plugin, answers the same
+four commands the UI sends to Tauri with TypeScript mock senders, one per
+"laptop" (a tab, or one half of the test page **Both laptops here**).
+The browser also reaches Senders through the dev server (`/dev-sender/<port>`,
+only the two link ports) instead of `ws://127.0.0.1`, because the dev server's
+own address is all that a forwarded port or a cloud preview exposes.
+The desktop app is unaffected: it still calls Rust and connects directly.
+`vite build` does not include the bridge. `?sender=host:port` still connects directly.

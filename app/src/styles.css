@@ -414,6 +414,21 @@ code {
   height: auto;
 }
 
+/* Browser test page: both laptops of a linked pair, one above the other. */
+.pair {
+  display: grid;
+  grid-template: minmax(0, 1fr) minmax(0, 1fr) / minmax(0, 1fr);
+  gap: 3px;
+  height: 100%;
+  background: #3a414d;
+}
+
+.pair > * {
+  min-height: 0;
+  height: auto;
+  background: var(--bg);
+}
+
 /* ---- Role selection ---------------------------------------------------- */
 
 .role-select {

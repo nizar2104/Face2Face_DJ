@@ -46,7 +46,7 @@ is two windows on the same computer for now.
 | Part | State |
 |---|---|
 | Viewer UI, clock sync, interpolation, reconnect (TypeScript) | Built and tested |
-| Mock sender tool (TypeScript) | Built and tested |
+| Mock sender tool and browser development bridge (TypeScript) | Built and tested |
 | Rust core (`crates/face2face-core`) | Built and tested (`cargo test`) |
 | Desktop app (`app/src-tauri`), including two linked windows | Built and run on Linux. Not yet tried on macOS or Windows |
 
@@ -66,17 +66,35 @@ is two windows on the same computer for now.
 npm install
 ```
 
-**In a browser (no Rust needed).** Two terminals:
+**In a browser (no Rust needed).**
 
 ```sh
-npm run mock-sender     # stand-in Sender with a scripted demo on ws://127.0.0.1:47801
-npm run dev             # then open http://localhost:1420 and choose "View only"
+npm run dev             # then open http://localhost:1420
 ```
 
-The mock sender takes commands on its terminal while it runs: `help` lists them
+The whole app runs in the browser: the dev server stands in for the Rust side
+with mock senders (`tools/mock-sender/dev-bridge.ts`).
+
+- **Both laptops here** (on the start screen, browser only) shows a linked pair in
+  one window: Laptop A on top, Laptop B below, each showing the other's decks.
+  The buttons in a laptop's top row control its own mock decks, so press Pause
+  in one half and watch the other half.
+- **Link up** makes this tab one laptop. Open a second tab and choose **Link up**
+  there for its partner.
+- **Share only** and **View only** work as in the desktop app.
+
+To reach the dev server through a forwarded port or a cloud workspace preview,
+start it with `FACE2FACE_DEV_ANY_HOST=1 npm run dev`.
+
+A stand-in Sender can also run on its own, for a Viewer to watch:
+
+```sh
+npm run mock-sender     # scripted demo on ws://127.0.0.1:47801
+```
+
+It takes commands on its terminal while it runs: `help` lists them
 (`load 1`, `play 1`, `pause 1`, `pitch 1 2.5`, `jump 1 -16`, `eject 1`, ...).
 `npm run mock-sender -- --no-demo` starts it without the script, `--decks 4` with four decks.
-A browser can only view; sharing decks needs the desktop app.
 
 **As the desktop app.**
 
@@ -126,7 +144,8 @@ app/                  the desktop app
   src-tauri/          Tauri shell: commands that call face2face-core
 crates/face2face-core/  Rust core: protocol, sources (mock), waveform (synthetic),
                         session, net (transport), sender
-tools/mock-sender/    stand-in Sender for developing the Viewer
+tools/mock-sender/    stand-in Sender for developing the Viewer, and the dev
+                      server's bridge that runs the whole app in a browser
 test-assets/          fixtures shared by the TypeScript and Rust tests
 ```
 

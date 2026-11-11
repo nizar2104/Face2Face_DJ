@@ -77,6 +77,15 @@ export class MockSender {
     return this.ready.size;
   }
 
+  get deckCount(): number {
+    return this.engine.deckCount;
+  }
+
+  /** Whether the scripted demo is running. */
+  get demoRunning(): boolean {
+    return this.demo;
+  }
+
   /** Starts listening. Resolves with the bound port (useful with port 0). */
   start(): Promise<number> {
     return new Promise((resolve, reject) => {
