@@ -51,6 +51,14 @@ test('load cycles through the library and starts paused at zero', () => {
   assert.equal((second[0] as Extract<MockEvent, { kind: 'loaded' }>).trackIndex, 1);
 });
 
+test('a first track other than 0 is where loading starts, and it wraps around', () => {
+  const e = new MockEngine(2, MOCK_LIBRARY.length - 1);
+  const first = run(e, 'load 1');
+  assert.equal((first[0] as Extract<MockEvent, { kind: 'loaded' }>).trackIndex, MOCK_LIBRARY.length - 1);
+  const second = run(e, 'load 2');
+  assert.equal((second[0] as Extract<MockEvent, { kind: 'loaded' }>).trackIndex, 0);
+});
+
 test('commands on an empty or missing deck report an error', () => {
   const e = new MockEngine(2);
   assert.equal(e.apply({ kind: 'play', deck: 1 }).error, 'deck 1 is empty');

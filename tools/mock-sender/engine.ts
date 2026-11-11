@@ -107,10 +107,12 @@ export class MockEngine {
   readonly deckCount: number;
   private decks: DeckSim[];
   private master: number | null = null;
-  private nextTrack = 0;
+  private nextTrack: number;
 
-  constructor(deckCount = 2) {
+  /** `firstTrack`: library index the first `load` without a track number takes (as `starting_at` in Rust). */
+  constructor(deckCount = 2, firstTrack = 0) {
     this.deckCount = deckCount;
+    this.nextTrack = firstTrack;
     this.decks = Array.from({ length: deckCount }, () => ({ track: null, trackIndex: 0, pos: 0, playing: false, pitch: 0 }));
   }
 

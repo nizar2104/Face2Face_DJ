@@ -182,3 +182,58 @@ async fn the_port_is_free_again_after_stop() {
     let again = MockSender::start(port, 2, false).await.expect("port is free after stop");
     again.stop().await;
 }
+
+/// Two free loopback ports, found by binding and releasing them.
+async fn two_free_ports() -> [u16; 2] {
+    let a = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("binds");
+    let b = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("binds");
+    [a.local_addr().expect("has an address").port(), b.local_addr().expect("has an address").port()]
+}
+
+/// The title of the track on deck 1, as a newly connected Viewer is told it.
+async fn deck_1_title(port: u16) -> (String, String) {
+    let mut client = connect(port).await;
+    send(&mut client, &viewer_hello(PROTOCOL_VERSION)).await;
+    let sender_name = until(&mut client, |frame| match frame {
+        Ok(Message::Hello { name, .. }) => Some(name.clone()),
+        _ => None,
+    })
+    .await;
+    let title = until(&mut client, |frame| match frame {
+        Ok(Message::DeckLoaded { deck: 1, track, .. }) => Some(track.title.clone()),
+        _ => None,
+    })
+    .await;
+    (sender_name, title)
+}
+
+#[tokio::test]
+async fn two_linked_senders_take_one_port_each_and_point_at_each_other() {
+    let ports = two_free_ports().await;
+    let a = MockSender::start_link(ports, 2, true).await.expect("the first side starts");
+    let b = MockSender::start_link(ports, 2, true).await.expect("the second side starts");
+    assert_eq!((a.port(), a.info().partner_port), (ports[0], Some(ports[1])));
+    assert_eq!((b.port(), b.info().partner_port), (ports[1], Some(ports[0])));
+    assert!(MockSender::start_link(ports, 2, true).await.is_err(), "there is no third side");
+
+    // Each side is a full Sender, and the two show different tracks.
+    let (name_a, title_a) = deck_1_title(a.port()).await;
+    let (name_b, title_b) = deck_1_title(b.port()).await;
+    assert_eq!(name_a, "Laptop A (mock decks)");
+    assert_eq!(name_b, "Laptop B (mock decks)");
+    assert_ne!(title_a, title_b);
+
+    // When one side leaves, its port is free for the next one to link.
+    a.stop().await;
+    let again = MockSender::start_link(ports, 2, true).await.expect("the freed side can be taken again");
+    assert_eq!((again.port(), again.info().partner_port), (ports[0], Some(ports[1])));
+    again.stop().await;
+    b.stop().await;
+}
+
+#[tokio::test]
+async fn a_plain_sender_has_no_partner() {
+    let sender = MockSender::start(0, 2, false).await.expect("sender starts");
+    assert_eq!(sender.info().partner_port, None);
+    sender.stop().await;
+}

@@ -5,12 +5,21 @@ import { Viewer } from './Viewer.tsx';
 
 const PITCH_STEP = 0.5;
 
+interface Props {
+  /**
+   * Two-way ("Link up"): share my decks and show the partner's.
+   * Otherwise "Share only": share my decks and preview what the partner sees.
+   */
+  link: boolean;
+  onSwitchRole: () => void;
+}
+
 /**
- * Milestone 0 Sender: starts the Rust core with its mock decks, offers buttons
- * for the mock commands, and previews what the partner sees through the real
- * WebSocket path.
+ * Milestone 0 Sender: starts the Rust core with its mock decks and offers
+ * buttons for the mock commands. Below them is a Viewer on the real WebSocket
+ * path: of the partner's decks when linked, of my own when only sharing.
  */
-export function Sender({ onSwitchRole }: { onSwitchRole: () => void }) {
+export function Sender({ link, onSwitchRole }: Props) {
   const [info, setInfo] = useState<SenderInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deck, setDeck] = useState(1);
@@ -23,7 +32,7 @@ export function Sender({ onSwitchRole }: { onSwitchRole: () => void }) {
     const fail = (e: unknown): void => {
       if (!cancelled) setError(String(e));
     };
-    startSender().then((i) => !cancelled && setInfo(i), fail);
+    startSender(link).then((i) => !cancelled && setInfo(i), fail);
     const poll = setInterval(() => {
       senderStatus().then((i) => !cancelled && i !== null && setInfo(i), fail);
     }, 1000);
@@ -31,7 +40,7 @@ export function Sender({ onSwitchRole }: { onSwitchRole: () => void }) {
       cancelled = true;
       clearInterval(poll);
     };
-  }, [desktop]);
+  }, [desktop, link]);
 
   const run = (command: string): void => {
     setError(null);
@@ -51,9 +60,9 @@ export function Sender({ onSwitchRole }: { onSwitchRole: () => void }) {
     return (
       <div className="viewer">
         <div className="fullscreen-notice">
-          <p className="notice-title">Share my decks needs the desktop app</p>
+          <p className="notice-title">Sharing decks needs the desktop app</p>
           <p className="notice-detail">
-            In a browser, start the stand-in Sender with <code>npm run mock-sender</code> and choose View partner.
+            A browser can only view. Start a stand-in Sender with <code>npm run mock-sender</code> and choose View only.
           </p>
           <button className="text-button" onClick={onSwitchRole}>Back</button>
         </div>
@@ -62,11 +71,16 @@ export function Sender({ onSwitchRole }: { onSwitchRole: () => void }) {
   }
 
   const deckCount = info?.decks ?? 2;
+  let status = 'Starting…';
+  if (info !== null && link) status = `My decks · ${info.viewers > 0 ? 'partner connected' : 'no partner yet'}`;
+  else if (info !== null) status = `Sharing mock decks · port ${info.port} · ${info.viewers} viewer${info.viewers === 1 ? '' : 's'}`;
+  // Linked, the Viewer below shows the partner's decks; otherwise it previews my own.
+  const viewPort = info === null ? null : link ? info.partner_port : info.port;
   return (
     <div className="sender">
       <div className="sender-bar">
-        <span className="sender-status">
-          {info !== null ? `Sharing mock decks · port ${info.port} · ${info.viewers} viewer${info.viewers === 1 ? '' : 's'}` : 'Starting…'}
+        <span className="sender-status" title={info !== null ? `${status} · port ${info.port}` : status}>
+          {status}
         </span>
         <span className="controls">
           <span className="seg" role="group" aria-label="Deck">
@@ -74,7 +88,7 @@ export function Sender({ onSwitchRole }: { onSwitchRole: () => void }) {
               <button key={n} className={deck === n ? 'on' : ''} onClick={() => setDeck(n)}>D{n}</button>
             ))}
           </span>
-          <span className="seg" role="group" aria-label="Mock deck controls">
+          <span className="seg" role="group" aria-label="Controls for my mock decks">
             <button onClick={() => { setPitch({ ...pitch, [deck]: 0 }); run(`load ${deck}`); }}>Load</button>
             <button onClick={() => run(`play ${deck}`)}>Play</button>
             <button onClick={() => run(`pause ${deck}`)}>Pause</button>
@@ -93,7 +107,9 @@ export function Sender({ onSwitchRole }: { onSwitchRole: () => void }) {
         </span>
       </div>
       {error !== null && <div className="banner banner-warn">{error}</div>}
-      {info !== null && <Viewer senderUrl={`ws://127.0.0.1:${info.port}`} onSwitchRole={leave} />}
+      {viewPort !== null && (
+        <Viewer senderUrl={`ws://127.0.0.1:${viewPort}`} partner={link} onSwitchRole={leave} />
+      )}
     </div>
   );
 }
