@@ -10,7 +10,7 @@ const params = new URLSearchParams(window.location.search);
 
 function initialRole(): Role | null {
   const role = params.get('role');
-  return role === 'sender' || role === 'viewer' ? role : null;
+  return role === 'link' || role === 'sender' || role === 'viewer' ? role : null;
 }
 
 function senderUrl(): string {
@@ -22,6 +22,6 @@ export function App() {
   // The role is asked on every launch in Milestone 0 (see docs/DECISIONS.md, D8).
   const [role, setRole] = useState<Role | null>(initialRole);
   if (role === null) return <RoleSelect onChoose={setRole} />;
-  if (role === 'sender') return <Sender onSwitchRole={() => setRole(null)} />;
-  return <Viewer senderUrl={senderUrl()} onSwitchRole={() => setRole(null)} />;
+  if (role === 'viewer') return <Viewer senderUrl={senderUrl()} onSwitchRole={() => setRole(null)} />;
+  return <Sender link={role === 'link'} onSwitchRole={() => setRole(null)} />;
 }

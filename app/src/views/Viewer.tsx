@@ -46,10 +46,12 @@ function decksToShow(store: ViewerStore, layout: Layout): number[] {
 interface Props {
   /** ws:// address of the Sender. */
   senderUrl: string;
+  /** Linked (two-way): the Sender is the partner's laptop, which also views this one. */
+  partner?: boolean;
   onSwitchRole?: () => void;
 }
 
-export function Viewer({ senderUrl, onSwitchRole }: Props) {
+export function Viewer({ senderUrl, partner = false, onSwitchRole }: Props) {
   const [store] = useState(() => new ViewerStore());
   const [settings, updateSettings] = useSettings();
   useStoreVersion(store);
@@ -73,8 +75,8 @@ export function Viewer({ senderUrl, onSwitchRole }: Props) {
       <div className="viewer">
         {bar}
         <div className="fullscreen-notice">
-          <p className="notice-title">Waiting for computer 1</p>
-          <p className="notice-detail">{store.error !== null ? store.error.message : `Looking for a Sender at ${senderUrl.replace(/^ws:\/\//, '')}…`}</p>
+          <p className="notice-title">Waiting for {partner ? 'your partner' : 'computer 1'}</p>
+          <p className="notice-detail">{store.error !== null ? store.error.message : `Looking for ${partner ? 'your partner' : 'a Sender'} at ${senderUrl.replace(/^ws:\/\//, '')}…`}</p>
         </div>
       </div>
     );

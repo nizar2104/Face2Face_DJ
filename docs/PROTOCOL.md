@@ -11,6 +11,12 @@ Change this document, the fixtures and both implementations together.
 - `TCP_NODELAY` is set on the Sender's sockets.
 - **Text frames** carry one JSON object each. **Binary frames** carry waveform chunks (section 4).
 - Milestone 0: the Sender listens on `127.0.0.1` only, because pairing does not exist yet.
+- **Two-way** ("Link up") is two such connections, one in each direction: each
+  laptop runs a Sender and connects a Viewer to the partner's Sender. Nothing in
+  the messages changes, and either direction can drop and reconnect without the other.
+- Milestone 0, two linked instances on one computer: the first listens on 47801 and
+  views 47802, the second listens on 47802 and views 47801. With two computers
+  (Milestone 1) both listen on 47801.
 
 ## 2. Rules for every JSON message
 

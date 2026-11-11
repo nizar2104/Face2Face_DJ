@@ -29,9 +29,12 @@ export interface SenderInfo {
   decks: number;
   viewers: number;
   demo: boolean;
+  /** Linked (two-way) only: the port of the partner's Sender. */
+  partner_port: number | null;
 }
 
-export const startSender = (): Promise<SenderInfo> => invoke<SenderInfo>('start_sender');
+/** `link`: two-way. Takes the free one of the two link ports and reports the partner's. */
+export const startSender = (link: boolean): Promise<SenderInfo> => invoke<SenderInfo>('start_sender', { link });
 export const stopSender = (): Promise<void> => invoke<void>('stop_sender');
 export const senderStatus = (): Promise<SenderInfo | null> => invoke<SenderInfo | null>('sender_status');
 /** Runs one mock-deck command, e.g. "play 1". Same vocabulary as tools/mock-sender. */

@@ -52,7 +52,7 @@ export function StatusBar({ store, settings, onChange, onSwitchRole }: Props) {
           {settings.notation === 'camelot' ? '8A' : 'Am'}
         </button>
         {onSwitchRole && (
-          <button className="seg-single" title="Switch role" onClick={onSwitchRole}>
+          <button className="seg-single" title="Back to the start screen" onClick={onSwitchRole}>
             ⇄
           </button>
         )}

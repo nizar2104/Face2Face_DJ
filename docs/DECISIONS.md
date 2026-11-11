@@ -113,3 +113,24 @@ Renamed everywhere except this log and the file name of the original brief:
 crate `face2face-core`, app crate `face2face-dj`, npm packages `@face2face-dj/*`,
 Tauri identifier `app.face2facedj.desktop`, local-storage keys `face2face-dj.*`.
 The wire protocol is unchanged (no name appears in it).
+
+**D21. Two-way: both laptops share and both view ("Link up"). It is two one-way links, not a new protocol.**
+The brief has one Sender and one Viewer. In a back-to-back set both DJs need to
+see each other, so the default mode is now two-way: each laptop runs a Sender
+and a Viewer. Each direction is its own WebSocket connection with the unchanged
+protocol, so one direction can fail or reconnect without the other, and the
+one-way roles stay available as "Share only" and "View only".
+Milestone 0 (one computer, loopback only, see D7): a linking instance takes the
+first free port of 47801 and 47802 and views the other one, so the first to link
+is "Laptop A" and the second "Laptop B", with no setting to choose. The two
+sides start at different tracks of the mock library.
+For Milestone 1: discovery must find the partner's Sender from both sides, and
+pairing must be mutual (one confirmation should authorise both directions).
+The window shows only the partner's decks, not one's own: those are in the DJ's
+own software. Revisit when: someone wants both on one screen.
+
+**D22. The NO-MAD logo is on the start screen and in the README.**
+`docs/brand/nomad-logo.jpg` is the file as supplied (white on dark).
+`app/public/nomad-logo.png` is made from it: cropped, with the dark background
+turned into transparency. The app icons (`app/src-tauri/icons`) are still the
+Milestone 0 placeholders; the logo is a wide wordmark and does not fit a square.

@@ -4,7 +4,7 @@
 // No console window on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use face2face_core::protocol::DEFAULT_PORT;
+use face2face_core::protocol::{DEFAULT_PORT, LINK_PORTS};
 use face2face_core::sender::{MockSender, SenderInfo};
 use tauri::State;
 use tokio::sync::Mutex;
@@ -17,16 +17,21 @@ struct AppState {
     sender: Mutex<Option<MockSender>>,
 }
 
-/// "Share my decks": starts the Sender, or reports the one already running.
+/// Starts the Sender, or reports the one already running.
+/// `link` is "Link up" (two-way): take whichever of the two link ports is free
+/// and tell the UI where the partner's Sender is. Without it, "Share only".
 #[tauri::command]
-async fn start_sender(state: State<'_, AppState>) -> Result<SenderInfo, String> {
+async fn start_sender(state: State<'_, AppState>, link: bool) -> Result<SenderInfo, String> {
     let mut sender = state.sender.lock().await;
     if let Some(running) = sender.as_ref() {
         return Ok(running.info());
     }
-    let started = MockSender::start(DEFAULT_PORT, MOCK_DECKS, true)
-        .await
-        .map_err(|error| format!("{error:#}"))?;
+    let started = if link {
+        MockSender::start_link(LINK_PORTS, MOCK_DECKS, true).await
+    } else {
+        MockSender::start(DEFAULT_PORT, MOCK_DECKS, true).await
+    }
+    .map_err(|error| format!("{error:#}"))?;
     let info = started.info();
     *sender = Some(started);
     Ok(info)

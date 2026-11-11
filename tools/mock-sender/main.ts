@@ -4,13 +4,15 @@
 //   npm run mock-sender                  scripted demo on ws://127.0.0.1:47801
 //   npm run mock-sender -- --no-demo     decks controlled from stdin only
 //   npm run mock-sender -- --decks 4 --port 47811 --session path/to/file.session
+//   npm run mock-sender -- --port 47802 --first-track 3 --name "Laptop B"
+//                                        a second one, as the other laptop of a linked pair
 
 import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { DEFAULT_PORT } from '../../app/src/protocol/messages.ts';
-import { COMMAND_HELP, parseSession } from './engine.ts';
+import { COMMAND_HELP, MOCK_LIBRARY, parseSession } from './engine.ts';
 import { MockSender } from './server.ts';
 
 const DEFAULT_SESSION = fileURLToPath(new URL('../../test-assets/sessions/demo.session', import.meta.url));
@@ -21,13 +23,15 @@ const { values } = parseArgs({
     host: { type: 'string', default: '127.0.0.1' },
     decks: { type: 'string', default: '2' },
     session: { type: 'string', default: DEFAULT_SESSION },
+    'first-track': { type: 'string', default: '1' },
+    name: { type: 'string' },
     'no-demo': { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
   },
 });
 
 if (values.help) {
-  console.log(`Usage: node tools/mock-sender/main.ts [--port N] [--host ADDR] [--decks 2|4] [--session FILE] [--no-demo]\n\n${COMMAND_HELP}`);
+  console.log(`Usage: node tools/mock-sender/main.ts [--port N] [--host ADDR] [--decks 2|4] [--session FILE] [--first-track 1-${MOCK_LIBRARY.length}] [--name TEXT] [--no-demo]\n\n${COMMAND_HELP}`);
   process.exit(0);
 }
 
@@ -35,11 +39,17 @@ const port = Number(values.port);
 const decks = Number(values.decks);
 if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('--port must be 0-65535');
 if (decks !== 2 && decks !== 4) throw new Error('--decks must be 2 or 4');
+const firstTrack = Number(values['first-track']);
+if (!Number.isInteger(firstTrack) || firstTrack < 1 || firstTrack > MOCK_LIBRARY.length) {
+  throw new Error(`--first-track must be 1-${MOCK_LIBRARY.length}`);
+}
 
 const sender = new MockSender({
   port,
   host: values.host,
   decks,
+  firstTrack: firstTrack - 1,
+  name: values.name,
   session: parseSession(readFileSync(values.session, 'utf8')),
   demo: !values['no-demo'],
   log: (line) => console.log(line),

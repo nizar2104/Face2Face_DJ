@@ -1,8 +1,13 @@
 //! The Milestone 0 Sender, assembled: mock decks -> session -> WebSocket server.
 //!
 //! The desktop shell (`app/src-tauri`) starts one of these when the user picks
-//! "Share my decks". Real sources replace the mock in Milestones 3 and 4.
+//! "Link up" (two-way) or "Share only". Real sources replace the mock in
+//! Milestones 3 and 4.
+//!
+//! Two-way is two of these, one per laptop, each viewed by the other: the
+//! protocol stays one-directional per connection (docs/DECISIONS.md, D21).
 
+use std::io::ErrorKind;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -25,21 +30,24 @@ pub struct SenderInfo {
     pub decks: u8,
     pub viewers: usize,
     pub demo: bool,
+    /// Linked (two-way) only: the port on which the partner's Sender listens.
+    pub partner_port: Option<u16>,
 }
 
 pub struct MockSender {
     port: u16,
+    partner_port: Option<u16>,
     session: Arc<Session>,
     mock: MockHandle,
     tasks: Vec<JoinHandle<()>>,
 }
 
-fn identity() -> SenderIdentity {
+fn identity(name: &str) -> SenderIdentity {
     // A random, persistent device id arrives with pairing in Milestone 1.
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     SenderIdentity {
         device_id: format!("sender-{:x}-{:x}", std::process::id(), nanos),
-        name: "Face2Face DJ Sender (mock decks)".to_string(),
+        name: name.to_string(),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         os: std::env::consts::OS.to_string(),
     }
@@ -55,10 +63,47 @@ impl MockSender {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
             .await
             .with_context(|| format!("could not listen on 127.0.0.1:{port} (is another Face2Face DJ Sender running?)"))?;
+        Self::run(listener, None, "Face2Face DJ Sender (mock decks)", deck_count, demo, 0)
+    }
+
+    /// Two-way on one computer (Milestone 0): listens on the first of `ports`
+    /// that is free and names the other one as the partner's. So the first
+    /// instance to link becomes "Laptop A", the second "Laptop B", and each
+    /// views the other. The two sides load different mock tracks.
+    ///
+    /// Must be called from within a Tokio runtime.
+    pub async fn start_link(ports: [u16; 2], deck_count: u8, demo: bool) -> anyhow::Result<Self> {
+        for (side, port) in ports.into_iter().enumerate() {
+            match TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await {
+                Ok(listener) => {
+                    let name = format!("Laptop {} (mock decks)", if side == 0 { 'A' } else { 'B' });
+                    let first_track = side * usize::from(deck_count.clamp(1, 4));
+                    return Self::run(listener, Some(ports[1 - side]), &name, deck_count, demo, first_track);
+                }
+                Err(error) if error.kind() == ErrorKind::AddrInUse => continue,
+                Err(error) => return Err(error).with_context(|| format!("could not listen on 127.0.0.1:{port}")),
+            }
+        }
+        anyhow::bail!(
+            "ports {} and {} are both in use (are two Face2Face DJ windows already linked on this computer?)",
+            ports[0],
+            ports[1]
+        )
+    }
+
+    fn run(
+        listener: TcpListener,
+        partner_port: Option<u16>,
+        name: &str,
+        deck_count: u8,
+        demo: bool,
+        first_track: usize,
+    ) -> anyhow::Result<Self> {
         let port = listener.local_addr()?.port();
 
         let session = Session::new();
-        let source = MockSource::new(deck_count, Some(DEMO_SESSION), demo).map_err(anyhow::Error::msg)?;
+        let source =
+            MockSource::starting_at(deck_count, Some(DEMO_SESSION), demo, first_track).map_err(anyhow::Error::msg)?;
         let mock = source.handle();
         let (events_tx, mut events_rx) = mpsc::unbounded_channel();
 
@@ -70,10 +115,10 @@ impl MockSender {
                     pump_session.apply(event);
                 }
             }),
-            tokio::spawn(serve(listener, Arc::clone(&session), Arc::new(identity()))),
+            tokio::spawn(serve(listener, Arc::clone(&session), Arc::new(identity(name)))),
         ];
         tracing::info!("mock sender listening on 127.0.0.1:{port}");
-        Ok(Self { port, session, mock, tasks })
+        Ok(Self { port, partner_port, session, mock, tasks })
     }
 
     pub fn port(&self) -> u16 {
@@ -86,6 +131,7 @@ impl MockSender {
             decks: self.mock.deck_count(),
             viewers: self.session.viewer_count(),
             demo: self.mock.demo(),
+            partner_port: self.partner_port,
         }
     }
 

@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const DEFAULT_PORT: u16 = 47801;
+/// Milestone 0, two linked instances on one computer: the first one listens on
+/// the first port, the second on the second, and each views the other. With
+/// two computers (Milestone 1) both listen on [`DEFAULT_PORT`].
+pub const LINK_PORTS: [u16; 2] = [DEFAULT_PORT, DEFAULT_PORT + 1];
 pub const MAX_DECKS: u8 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

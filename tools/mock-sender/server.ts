@@ -33,6 +33,8 @@ export interface MockSenderOptions {
   /** Milestone 0 has no pairing yet, so the default is loopback only. */
   host?: string;
   decks?: number;
+  /** Library index of the first track loaded; lets two mock senders show different tracks. */
+  firstTrack?: number;
   name?: string;
   /** Session steps for the scripted demo; no demo if omitted. */
   session?: SessionStep[];
@@ -61,7 +63,7 @@ export class MockSender {
 
   constructor(opts: MockSenderOptions) {
     this.opts = opts;
-    this.engine = new MockEngine(opts.decks ?? 2);
+    this.engine = new MockEngine(opts.decks ?? 2, opts.firstTrack ?? 0);
     this.player = opts.session !== undefined ? new SessionPlayer(opts.session) : null;
     this.demo = (opts.demo ?? true) && this.player !== null;
   }

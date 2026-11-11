@@ -197,8 +197,15 @@ pub struct MockEngine {
 
 impl MockEngine {
     pub fn new(deck_count: u8) -> Self {
+        Self::starting_at(deck_count, 0)
+    }
+
+    /// Like [`MockEngine::new`], but the first `load` without a track number
+    /// takes library index `first_track`. Two linked laptops use different
+    /// values so that each shows the other different tracks.
+    pub fn starting_at(deck_count: u8, first_track: usize) -> Self {
         let count = usize::from(deck_count.clamp(1, 4));
-        Self { decks: vec![EMPTY_DECK; count], master: None, next_track: 0 }
+        Self { decks: vec![EMPTY_DECK; count], master: None, next_track: first_track }
     }
 
     pub fn deck_count(&self) -> u8 {
@@ -472,12 +479,17 @@ pub struct MockHandle {
 impl MockSource {
     /// `session` is the text of a session file. `demo` starts it playing.
     pub fn new(deck_count: u8, session: Option<&str>, demo: bool) -> Result<Self, String> {
+        Self::starting_at(deck_count, session, demo, 0)
+    }
+
+    /// Like [`MockSource::new`]; `first_track` as in [`MockEngine::starting_at`].
+    pub fn starting_at(deck_count: u8, session: Option<&str>, demo: bool, first_track: usize) -> Result<Self, String> {
         let player = match session {
             Some(text) => Some(SessionPlayer::new(parse_session(text)?)),
             None => None,
         };
         let demo = demo && player.is_some();
-        let state = MockState { engine: MockEngine::new(deck_count), player, demo, events: None };
+        let state = MockState { engine: MockEngine::starting_at(deck_count, first_track), player, demo, events: None };
         Ok(Self { state: Arc::new(Mutex::new(state)) })
     }
 
@@ -590,6 +602,19 @@ mod tests {
             "jump 1", "demo", "demo maybe", "demo on now", "scratch 1",
         ] {
             assert!(parse_command(line).is_err(), "\"{line}\" should be rejected");
+        }
+    }
+
+    #[test]
+    fn starting_at_picks_the_first_track_and_wraps_around() {
+        let mut engine = MockEngine::starting_at(2, MOCK_LIBRARY.len() - 1);
+        match &run(&mut engine, "load 1")[0] {
+            SourceEvent::TrackLoaded { meta, .. } => assert_eq!(meta.title, MOCK_LIBRARY[MOCK_LIBRARY.len() - 1].title),
+            other => panic!("unexpected event: {other:?}"),
+        }
+        match &run(&mut engine, "load 2")[0] {
+            SourceEvent::TrackLoaded { meta, .. } => assert_eq!(meta.title, "Neon Tide"),
+            other => panic!("unexpected event: {other:?}"),
         }
     }
 
