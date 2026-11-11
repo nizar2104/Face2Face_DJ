@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='utf-8'?>
+<MixxxControllerPreset mixxxVersion="2.4.0+" schemaVersion="1">
+    <info>
+        <name>Face2Face DJ</name>
+        <author>Face2Face DJ</author>
+        <description>Sends the state of decks 1 to 4 to the Face2Face DJ app, so a back-to-back partner can see them. Read-only: it controls nothing in Mixxx.</description>
+    </info>
+    <controller id="Face2Face DJ">
+        <scriptfiles>
+            <file functionprefix="Face2Face" filename="Face2Face-DJ.js"/>
+        </scriptfiles>
+        <controls/>
+        <outputs/>
+    </controller>
+</MixxxControllerPreset>

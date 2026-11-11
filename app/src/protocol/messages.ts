@@ -19,6 +19,8 @@ export interface Hello {
   role: Role;
   app_version: string;
   os: string;
+  /** Viewer to Sender: the Sender's pairing code, when it has one. */
+  pair_code?: string;
 }
 
 export interface SourceStatus {

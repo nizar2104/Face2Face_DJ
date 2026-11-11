@@ -22,6 +22,8 @@ export interface ConnectionOptions {
   name: string;
   appVersion: string;
   os: string;
+  /** The Sender's pairing code, if it needs one (a Sender on another laptop does). */
+  pairCode?: string;
   /** Viewer monotonic clock in seconds. Must be the same clock the store uses. */
   now?: () => number;
 }
@@ -83,6 +85,7 @@ export class ViewerConnection {
         role: 'viewer',
         app_version: this.opts.appVersion,
         os: this.opts.os,
+        ...(this.opts.pairCode !== undefined ? { pair_code: this.opts.pairCode } : {}),
       };
       ws.send(JSON.stringify(hello));
       this.staleTimer = setInterval(() => this.checkStale(), 1000);
@@ -134,6 +137,15 @@ export class ViewerConnection {
         return;
       case 'ping':
       case 'heartbeat':
+        return;
+      case 'error':
+        this.store.handleMessage(msg);
+        // The same code would be refused again, and each wrong attempt makes
+        // the Sender slower to answer: stop until the user corrects it.
+        if (msg.code === 'pairing_failed') {
+          this.stop();
+          this.store.setConnection(this.store.everConnected ? 'disconnected' : 'connecting');
+        }
         return;
       default:
         this.store.handleMessage(msg);

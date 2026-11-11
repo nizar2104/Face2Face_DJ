@@ -27,6 +27,12 @@ pub fn fnv1a32(text: &str) -> u32 {
     hash
 }
 
+/// The hash that track and waveform ids are built from until audio files are
+/// hashed (Milestone 2). The mock seeds its waveform with it too.
+pub fn track_hash(artist: &str, title: &str) -> u32 {
+    fnv1a32(&format!("{artist}\0{title}"))
+}
+
 /// `[kick, mid, high]` gain per 16-bar section: intro, build, drop, break, drop, outro.
 const SECTIONS: [[f64; 3]; 6] = [
     [0.8, 0.25, 0.3],

@@ -6,7 +6,8 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use face2face_core::protocol::chunk::{decode_chunk, WaveformKind};
 use face2face_core::protocol::{Message, Role, PROTOCOL_VERSION};
-use face2face_core::sender::MockSender;
+use face2face_core::sender::{Access, Sender};
+use face2face_core::sources::SourceKind;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
@@ -59,12 +60,13 @@ fn viewer_hello(protocol: u32) -> Message {
         role: Role::Viewer,
         app_version: "0.1.0".to_string(),
         os: "test".to_string(),
+        pair_code: None,
     }
 }
 
 #[tokio::test]
 async fn a_viewer_gets_snapshot_waveform_live_state_and_pongs() {
-    let sender = MockSender::start(0, 2, false).await.expect("sender starts");
+    let sender = Sender::start_mock(0, 2, false).await.expect("sender starts");
     sender.command("load 1 1").expect("load");
 
     let mut client = connect(sender.port()).await;
@@ -148,7 +150,7 @@ async fn a_viewer_gets_snapshot_waveform_live_state_and_pongs() {
 
 #[tokio::test]
 async fn garbage_and_wrong_versions_are_handled() {
-    let sender = MockSender::start(0, 2, false).await.expect("sender starts");
+    let sender = Sender::start_mock(0, 2, false).await.expect("sender starts");
     let mut client = connect(sender.port()).await;
 
     // Garbage is ignored; a ping before hello is still answered.
@@ -175,11 +177,11 @@ async fn garbage_and_wrong_versions_are_handled() {
 
 #[tokio::test]
 async fn the_port_is_free_again_after_stop() {
-    let sender = MockSender::start(0, 2, false).await.expect("sender starts");
+    let sender = Sender::start_mock(0, 2, false).await.expect("sender starts");
     let port = sender.port();
-    assert!(MockSender::start(port, 2, false).await.is_err(), "port is taken while running");
+    assert!(Sender::start_mock(port, 2, false).await.is_err(), "port is taken while running");
     sender.stop().await;
-    let again = MockSender::start(port, 2, false).await.expect("port is free after stop");
+    let again = Sender::start_mock(port, 2, false).await.expect("port is free after stop");
     again.stop().await;
 }
 
@@ -210,11 +212,11 @@ async fn deck_1_title(port: u16) -> (String, String) {
 #[tokio::test]
 async fn two_linked_senders_take_one_port_each_and_point_at_each_other() {
     let ports = two_free_ports().await;
-    let a = MockSender::start_link(ports, 2, true).await.expect("the first side starts");
-    let b = MockSender::start_link(ports, 2, true).await.expect("the second side starts");
+    let a = Sender::start_link(ports, SourceKind::Mock, Access::ThisComputer).await.expect("the first side starts");
+    let b = Sender::start_link(ports, SourceKind::Mock, Access::ThisComputer).await.expect("the second side starts");
     assert_eq!((a.port(), a.info().partner_port), (ports[0], Some(ports[1])));
     assert_eq!((b.port(), b.info().partner_port), (ports[1], Some(ports[0])));
-    assert!(MockSender::start_link(ports, 2, true).await.is_err(), "there is no third side");
+    assert!(Sender::start_link(ports, SourceKind::Mock, Access::ThisComputer).await.is_err(), "there is no third side");
 
     // Each side is a full Sender, and the two show different tracks.
     let (name_a, title_a) = deck_1_title(a.port()).await;
@@ -225,7 +227,7 @@ async fn two_linked_senders_take_one_port_each_and_point_at_each_other() {
 
     // When one side leaves, its port is free for the next one to link.
     a.stop().await;
-    let again = MockSender::start_link(ports, 2, true).await.expect("the freed side can be taken again");
+    let again = Sender::start_link(ports, SourceKind::Mock, Access::ThisComputer).await.expect("the freed side can be taken again");
     assert_eq!((again.port(), again.info().partner_port), (ports[0], Some(ports[1])));
     again.stop().await;
     b.stop().await;
@@ -233,7 +235,42 @@ async fn two_linked_senders_take_one_port_each_and_point_at_each_other() {
 
 #[tokio::test]
 async fn a_plain_sender_has_no_partner() {
-    let sender = MockSender::start(0, 2, false).await.expect("sender starts");
+    let sender = Sender::start_mock(0, 2, false).await.expect("sender starts");
     assert_eq!(sender.info().partner_port, None);
     sender.stop().await;
 }
+
+/// The first text frame, whatever it is.
+async fn first_reply(port: u16, pair_code: Option<&str>) -> Message {
+    let mut client = connect(port).await;
+    let mut hello = viewer_hello(PROTOCOL_VERSION);
+    if let Message::Hello { pair_code: code, .. } = &mut hello {
+        *code = pair_code.map(str::to_string);
+    }
+    send(&mut client, &hello).await;
+    next(&mut client).await.expect("a text frame")
+}
+
+#[tokio::test]
+async fn a_paired_sender_admits_only_viewers_with_its_code() {
+    let access = Access::Paired { code: "483920".to_string() };
+    let sender = Sender::start(0, SourceKind::Mock, access).await.expect("sender starts");
+
+    assert!(matches!(first_reply(sender.port(), Some("483920")).await, Message::Hello { role: Role::Sender, .. }));
+    for wrong in [None, Some("000000")] {
+        match first_reply(sender.port(), wrong).await {
+            Message::Error { code, .. } => assert_eq!(code, "pairing_failed"),
+            other => panic!("a Viewer with code {wrong:?} got {other:?}"),
+        }
+    }
+    // Wrong guesses did not lock the partner out.
+    assert!(matches!(first_reply(sender.port(), Some("483920")).await, Message::Hello { .. }));
+    sender.stop().await;
+}
+
+#[tokio::test]
+async fn a_sender_on_the_network_needs_a_real_code() {
+    let short = Access::Paired { code: "123".to_string() };
+    assert!(Sender::start(0, SourceKind::Mock, short).await.is_err());
+}
+

@@ -2,8 +2,9 @@
 //! (brief 7.6). JSON text frames carry control and state, binary frames carry
 //! waveform chunks. See `docs/PROTOCOL.md` for the handshake.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{Sink, SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -11,6 +12,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinSet;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message as WsMessage};
 
+use crate::net::pairing::Pairing;
 use crate::protocol::{Message, Role, PROTOCOL_VERSION};
 use crate::session::{Frame, Session};
 
@@ -30,7 +32,13 @@ pub struct SenderIdentity {
 
 /// Accepts Viewers until the task is aborted. Aborting it also closes every
 /// Viewer connection, because they live in the `JoinSet` owned by this future.
-pub async fn serve(listener: TcpListener, session: Arc<Session>, identity: Arc<SenderIdentity>) {
+/// With `pairing`, a Viewer must present the code in its `hello`.
+pub async fn serve(
+    listener: TcpListener,
+    session: Arc<Session>,
+    identity: Arc<SenderIdentity>,
+    pairing: Option<Arc<Pairing>>,
+) {
     let mut connections = JoinSet::new();
     loop {
         tokio::select! {
@@ -38,8 +46,9 @@ pub async fn serve(listener: TcpListener, session: Arc<Session>, identity: Arc<S
                 Ok((stream, peer)) => {
                     let session = Arc::clone(&session);
                     let identity = Arc::clone(&identity);
+                    let pairing = pairing.clone();
                     connections.spawn(async move {
-                        if let Err(error) = handle_viewer(stream, session, identity).await {
+                        if let Err(error) = handle_viewer(stream, peer, session, identity, pairing).await {
                             tracing::debug!("viewer {peer} dropped: {error:#}");
                         }
                     });
@@ -87,10 +96,22 @@ where
     send(sink, message).await
 }
 
+/// Tells the Viewer why it is turned away, and closes.
+async fn refuse<S>(sink: &mut S, code: &str, message: String) -> anyhow::Result<()>
+where
+    S: Sink<WsMessage, Error = WsError> + Unpin,
+{
+    send_json(sink, &Message::Error { code: code.to_string(), message }).await?;
+    let _ = sink.close().await;
+    Ok(())
+}
+
 async fn handle_viewer(
     stream: TcpStream,
+    peer: SocketAddr,
     session: Arc<Session>,
     identity: Arc<SenderIdentity>,
+    pairing: Option<Arc<Pairing>>,
 ) -> anyhow::Result<()> {
     stream.set_nodelay(true)?;
     let websocket = tokio_tungstenite::accept_async(stream).await?;
@@ -109,15 +130,25 @@ async fn handle_viewer(
                         Some(Message::Ping { t_viewer }) => {
                             send_json(&mut sink, &Message::Pong { t_viewer, t_sender: session.now() }).await?;
                         }
-                        Some(Message::Hello { protocol, role: Role::Viewer, name, .. }) => {
+                        Some(Message::Hello { protocol, role: Role::Viewer, name, pair_code, .. }) => {
                             if protocol != PROTOCOL_VERSION {
-                                let refusal = Message::Error {
-                                    code: "protocol_mismatch".to_string(),
-                                    message: format!("Sender speaks protocol {PROTOCOL_VERSION}, Viewer sent {protocol}."),
+                                let message = format!("Sender speaks protocol {PROTOCOL_VERSION}, Viewer sent {protocol}.");
+                                return refuse(&mut sink, "protocol_mismatch", message).await;
+                            }
+                            if let Some(pairing) = &pairing {
+                                // Guessing is kept slow: each attempt waits its turn (net::pairing).
+                                let paired = match pairing.take_turn(peer.ip(), Instant::now()) {
+                                    Some(turn) => {
+                                        tokio::time::sleep_until(turn.into()).await;
+                                        pairing.check(peer.ip(), pair_code.as_deref())
+                                    }
+                                    None => false,
                                 };
-                                send_json(&mut sink, &refusal).await?;
-                                let _ = sink.close().await;
-                                return Ok(());
+                                if !paired {
+                                    tracing::warn!("viewer {peer} ({name}) sent a wrong pairing code");
+                                    let message = "Wrong pairing code. Check the code shown on your partner's laptop.";
+                                    return refuse(&mut sink, "pairing_failed", message.to_string()).await;
+                                }
                             }
                             break name;
                         }
@@ -138,6 +169,7 @@ async fn handle_viewer(
         role: Role::Sender,
         app_version: identity.app_version.clone(),
         os: identity.os.clone(),
+        pair_code: None,
     };
     send_json(&mut sink, &hello).await?;
     let (snapshot, mut live) = session.subscribe();
