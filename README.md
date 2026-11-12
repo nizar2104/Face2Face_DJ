@@ -50,9 +50,10 @@ analysis exists. No audio files are read yet.
 | Viewer UI, clock sync, interpolation, reconnect (TypeScript) | Built and tested |
 | Mock sender tool (TypeScript) | Built and tested |
 | Rust core (`crates/face2face-core`) | Built and tested (`cargo test`) |
-| Desktop app (`app/src-tauri`), including two linked windows | Built and run on Linux; builds on macOS. Not yet tried on Windows |
-| Linking two laptops: address + pairing code (`net/pairing.rs`, `app/src/pairing.ts`) | Built and tested; run on one Mac over its network address. Not yet between two laptops |
-| Readers: Traktor, rekordbox, Pro DJ Link, Mixxx (`crates/face2face-core/src/sources`) | Built and tested with hand-built messages. Not yet run against the real programs or players |
+| Desktop app (`app/src-tauri`), including two linked windows | Run on an Intel Mac and on Windows, linked to each other. Apple Silicon: built (one app for both Mac kinds) and the tests pass on an Apple Silicon machine, but the app itself has not been run on one |
+| Linking two laptops: address + pairing code (`net/pairing.rs`, `app/src/pairing.ts`) | Built and tested; run between a Mac and a Windows PC on one Wi-Fi |
+| Readers: Traktor, rekordbox, Pro DJ Link, Mixxx (`crates/face2face-core/src/sources`) | Mixxx: run for real (Mixxx 2.5.6 on a Mac, seen on a Windows PC). The others: tested with hand-built messages only |
+| Downloads | Every pull request builds a Windows installer and a macOS disk image (`.github/workflows/build.yml`); neither is code-signed |
 
 ![Viewer with two mock decks](docs/screenshots/viewer-two-decks.png)
 

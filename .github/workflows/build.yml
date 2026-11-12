@@ -1,10 +1,12 @@
-# Builds the Windows app. The .exe files are attached to the run as the
-# artifact "face2face-dj-windows" (Actions tab > the run > Artifacts).
+# Builds the apps people download, and runs the tests on each system first.
+# The files are attached to the run as artifacts (Actions tab > the run >
+# Artifacts): "face2face-dj-windows" and "face2face-dj-macos".
 #
 # Runs for every pull request, and by hand from the Actions tab once this file
-# is on the default branch. The build is not code-signed, so Windows shows a
-# SmartScreen warning the first time ("More info" > "Run anyway").
-name: Windows build
+# is on the default branch. Nothing is code-signed with a paid certificate:
+# Windows shows a SmartScreen warning the first time ("More info" > "Run
+# anyway"), macOS refuses a double-click the first time (right-click > Open).
+name: Build
 
 on:
   pull_request:
@@ -14,7 +16,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,3 +70,31 @@ jobs:
           name: face2face-dj-windows
           if-no-files-found: error
           path: windows/
+
+  # GitHub's macOS machines are Apple Silicon, so the tests run on one. The app
+  # itself is built for both Apple Silicon and Intel, in one file.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: uname -m
+      - run: npm ci
+      - run: npm test
+      - run: cargo test
+      - run: npm run tauri -- build --target universal-apple-darwin --bundles dmg
+      - name: Check the app holds both architectures
+        run: lipo -archs "target/universal-apple-darwin/release/bundle/macos/Face2Face DJ.app/Contents/MacOS/"*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: face2face-dj-macos
+          if-no-files-found: error
+          path: target/universal-apple-darwin/release/bundle/dmg/*.dmg
+
