@@ -1,0 +1,38 @@
+# Builds the Windows app. The .exe files are attached to the run as the
+# artifact "face2face-dj-windows" (Actions tab > the run > Artifacts).
+#
+# Runs for every pull request, and by hand from the Actions tab once this file
+# is on the default branch. The build is not code-signed, so Windows shows a
+# SmartScreen warning the first time ("More info" > "Run anyway").
+name: Windows build
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+      - run: npm test
+      - run: cargo test
+      # The installer (NSIS) also installs Microsoft's WebView2 if the PC lacks it.
+      - run: npm run tauri -- build --bundles nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: face2face-dj-windows
+          if-no-files-found: error
+          path: |
+            target/release/bundle/nsis/*.exe
+            target/release/face2face-dj.exe
