@@ -93,7 +93,10 @@ jobs:
       - name: Check the app holds both architectures
         # The program that goes into the app. (The app folder itself is
         # removed again once the disk image is made.)
-        run: lipo -archs target/universal-apple-darwin/release/face2face-dj | grep -q "x86_64 arm64" && lipo -archs target/universal-apple-darwin/release/face2face-dj
+        run: |
+          archs=$(lipo -archs target/universal-apple-darwin/release/face2face-dj)
+          echo "$archs"
+          [[ "$archs" == *arm64* && "$archs" == *x86_64* ]]
       - uses: actions/upload-artifact@v4
         with:
           name: face2face-dj-macos
