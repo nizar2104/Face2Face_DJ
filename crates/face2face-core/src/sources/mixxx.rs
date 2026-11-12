@@ -12,18 +12,23 @@
 //! "Face2Face DJ". Mixxx lists MIDI devices when it starts, so the port must
 //! exist before Mixxx is opened (docs/SOURCES.md).
 //!
-//! What Mixxx scripts cannot read: the track's title and artist. Decks are
-//! shown as "Mixxx deck 1" and so on, with tempo, key, position and length.
+//! What Mixxx scripts cannot read: which track is on a deck. That, with the
+//! title, artist and Mixxx's own waveform, is looked up in Mixxx's library by
+//! the track's length ([`super::mixxx_library`]). Until the look-up succeeds
+//! (or if the library cannot be read) a deck is shown as "Mixxx deck 1" and so
+//! on, with tempo, key, position and length.
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use midir::{Ignore, MidiInput, MidiInputConnection};
+use midir::{Ignore, MidiInput, MidiInputConnection, MidiOutputConnection};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use super::board::{DeckBoard, DeckUpdate, TICK};
 use super::key::key_from_pitch_class;
+use super::mixxx_library::{self, LibraryTrack};
 use super::{DeckSource, SourceEvent, SourceStatus, TrackMeta, RETRY_OPEN};
 use crate::protocol::MAX_DECKS;
 
@@ -35,8 +40,40 @@ const PORT_NAME_MATCH: &str = "face2face";
 const HEADER: [u8; 5] = [0xf0, 0x7d, 0x46, 0x32, 0x01];
 const MESSAGE_LENGTH: usize = 25;
 const DISCONNECTED: Duration = Duration::from_secs(3);
+/// Mixxx analyses a track when it is first loaded, and only then has its
+/// waveform. So a look-up that finds none is repeated for about a minute.
+const LOOKUP_EVERY: Duration = Duration::from_secs(3);
+const LOOKUP_ATTEMPTS: u8 = 20;
 
-pub struct MixxxSource;
+pub struct MixxxSource {
+    /// The folder with Mixxx's library, for titles and waveforms. `None`: there is none to read.
+    pub library_dir: Option<PathBuf>,
+}
+
+impl Default for MixxxSource {
+    fn default() -> Self {
+        Self { library_dir: mixxx_library::default_dir() }
+    }
+}
+
+/// A question for Mixxx's library, to be asked off the main loop.
+#[derive(Debug, Clone, PartialEq)]
+struct Lookup {
+    deck: u8,
+    /// The load the answer is for; a later load makes it stale.
+    load: u8,
+    duration_s: f64,
+    bpm: f64,
+}
+
+/// How far the look-up for the track on a deck has got.
+#[derive(Debug, Clone, Copy, Default)]
+struct LookupProgress {
+    attempts: u8,
+    next: Option<Instant>,
+    /// The waveform has arrived; nothing more to ask.
+    done: bool,
+}
 
 /// One deck as the mapping script reports it.
 #[derive(Debug, Clone, PartialEq)]
@@ -111,6 +148,7 @@ fn status(connected: bool, decks: u8, reader_status: String) -> SourceStatus {
 struct Reader {
     board: DeckBoard,
     loads: [Option<u8>; MAX_DECKS as usize],
+    lookups: [LookupProgress; MAX_DECKS as usize],
     last_message: Option<Instant>,
     /// Whether Mixxx is sending, and how many decks it has.
     reported: (bool, u8),
@@ -118,7 +156,13 @@ struct Reader {
 
 impl Reader {
     fn new(events: mpsc::UnboundedSender<SourceEvent>) -> Self {
-        let reader = Self { board: DeckBoard::new(events), loads: [None; MAX_DECKS as usize], last_message: None, reported: (false, 2) };
+        let reader = Self {
+            board: DeckBoard::new(events),
+            loads: [None; MAX_DECKS as usize],
+            lookups: [LookupProgress::default(); MAX_DECKS as usize],
+            last_message: None,
+            reported: (false, 2),
+        };
         reader.board.status(status(false, 2, "waiting for Mixxx".to_string()));
         reader
     }
@@ -131,7 +175,8 @@ impl Reader {
         }
     }
 
-    fn handle(&mut self, report: &DeckReport, now: Instant) {
+    /// One report from the script. Returns a library look-up that is now due.
+    fn handle(&mut self, report: &DeckReport, now: Instant) -> Option<Lookup> {
         self.last_message = Some(now);
         self.report(true, report.decks);
         let deck = report.deck;
@@ -139,7 +184,7 @@ impl Reader {
         if !report.loaded {
             self.loads[index] = None;
             self.board.unload(deck);
-            return;
+            return None;
         }
         // Mixxx fills in the tempo and key when it has analysed a new track.
         let bpm_original = if report.bpm_track > 0.0 { report.bpm_track } else { report.bpm_current };
@@ -150,6 +195,7 @@ impl Reader {
         };
         if self.loads[index] != Some(report.load) {
             self.loads[index] = Some(report.load);
+            self.lookups[index] = LookupProgress::default();
             let meta = TrackMeta {
                 title: format!("Mixxx deck {deck}"),
                 artist: String::new(),
@@ -175,6 +221,33 @@ impl Reader {
             on_air: Some(report.on_air),
         };
         self.board.update_at(deck, now, update);
+
+        let progress = &mut self.lookups[index];
+        let due = !progress.done && progress.attempts < LOOKUP_ATTEMPTS && progress.next.is_none_or(|next| now >= next);
+        if !due || report.duration_s <= 0.0 {
+            return None;
+        }
+        progress.attempts += 1;
+        progress.next = Some(now + LOOKUP_EVERY);
+        Some(Lookup { deck, load: report.load, duration_s: report.duration_s, bpm: report.bpm_track })
+    }
+
+    /// What the library knows about the track a [`Lookup`] asked for.
+    fn found(&mut self, lookup: &Lookup, track: LibraryTrack) {
+        let index = usize::from(lookup.deck - 1);
+        if self.loads[index] != Some(lookup.load) {
+            return; // another track has been loaded since
+        }
+        let Some(current) = self.board.meta(lookup.deck) else { return };
+        let file_name = track.file_path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+        let meta = TrackMeta { title: track.title, artist: track.artist, album: track.album, file_name, ..current.clone() };
+        self.lookups[index].done = track.waveform.is_some();
+        // Asked again while waiting for the analysis: say it once only.
+        if meta == *current && track.waveform.is_none() {
+            return;
+        }
+        // The next report from the script, 50 ms away, restores the deck's state.
+        self.board.load_with(lookup.deck, meta, Some(track.file_path), track.waveform);
     }
 
     fn tick(&mut self, now: Instant) {
@@ -190,8 +263,16 @@ impl Reader {
     }
 }
 
+/// The open MIDI port. Dropping it closes the port.
+struct Port {
+    name: String,
+    _receiving: MidiInputConnection<()>,
+    /// The other half of a virtual port, see [`open_port`]. Nothing is sent on it.
+    _sending: Option<MidiOutputConnection>,
+}
+
 /// Opens the MIDI port and forwards everything received on it.
-fn open_port(received: mpsc::UnboundedSender<Vec<u8>>) -> Result<(MidiInputConnection<()>, String), String> {
+fn open_port(received: mpsc::UnboundedSender<Vec<u8>>) -> Result<Port, String> {
     let mut input = MidiInput::new(PORT_NAME).map_err(|error| format!("MIDI is not available: {error}"))?;
     input.ignore(Ignore::None); // system-exclusive messages are ignored by default
     let forward = move |_time: u64, bytes: &[u8], _: &mut ()| {
@@ -203,13 +284,22 @@ fn open_port(received: mpsc::UnboundedSender<Vec<u8>>) -> Result<(MidiInputConne
     });
     if let Some((port, name)) = existing {
         let connection = input.connect(&port, "from Mixxx", forward, ()).map_err(|error| format!("cannot open MIDI port {name}: {error}"))?;
-        return Ok((connection, name));
+        return Ok(Port { name, _receiving: connection, _sending: None });
     }
     #[cfg(unix)]
     {
-        use midir::os::unix::VirtualInput;
+        use midir::os::unix::{VirtualInput, VirtualOutput};
         let connection = input.create_virtual(PORT_NAME, forward, ()).map_err(|error| format!("cannot create a MIDI port: {error}"))?;
-        Ok((connection, PORT_NAME.to_string()))
+        // Mixxx lists a MIDI device by its input and does not offer one that
+        // can only be sent to. So the port gets a second half of the same
+        // name for Mixxx to pair it with, although we never send on it.
+        let sending = midir::MidiOutput::new(PORT_NAME)
+            .ok()
+            .and_then(|output| output.create_virtual(PORT_NAME).ok());
+        if sending.is_none() {
+            tracing::warn!("Mixxx: could not create the sending half of the MIDI port; Mixxx may not list it");
+        }
+        Ok(Port { name: PORT_NAME.to_string(), _receiving: connection, _sending: sending })
     }
     #[cfg(not(unix))]
     {
@@ -238,7 +328,7 @@ impl DeckSource for MixxxSource {
                 let (opened_tx, opened) = tokio::sync::oneshot::channel();
                 std::thread::spawn(move || {
                     let port = open_port(received_tx);
-                    let _ = opened_tx.send(port.as_ref().map(|(_, name)| name.clone()).map_err(String::clone));
+                    let _ = opened_tx.send(port.as_ref().map(|port| port.name.clone()).map_err(String::clone));
                     if let Ok(_connection) = port {
                         let _ = closed.recv();
                     }
@@ -260,6 +350,7 @@ impl DeckSource for MixxxSource {
             if reported {
                 reader.board.status(status(false, 2, "waiting for Mixxx".to_string()));
             }
+            let (found_tx, mut found_rx) = mpsc::unbounded_channel::<(Lookup, LibraryTrack)>();
             let mut ticks = tokio::time::interval(TICK);
             ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
@@ -267,9 +358,21 @@ impl DeckSource for MixxxSource {
                     Some(bytes) = received.recv() => {
                         let now = Instant::now();
                         for report in reports(&bytes) {
-                            reader.handle(&report, now);
+                            let (Some(lookup), Some(dir)) = (reader.handle(&report, now), self.library_dir.clone()) else { continue };
+                            let found = found_tx.clone();
+                            // Reading the database and a waveform of a few megabytes blocks.
+                            tokio::task::spawn_blocking(move || {
+                                match mixxx_library::find_track(&dir, lookup.duration_s, lookup.bpm) {
+                                    Ok(Some(track)) => {
+                                        let _ = found.send((lookup, track));
+                                    }
+                                    Ok(None) => {}
+                                    Err(error) => tracing::warn!("Mixxx: cannot read the library: {error:#}"),
+                                }
+                            });
                         }
                     }
+                    Some((lookup, track)) = found_rx.recv() => reader.found(&lookup, track),
                     _ = ticks.tick() => reader.tick(Instant::now()),
                 }
             }
@@ -380,6 +483,72 @@ mod tests {
         report.loaded = false;
         reader.handle(&report, now);
         assert!(drain(&mut events).contains(&SourceEvent::TrackUnloaded { deck: 2 }));
+    }
+
+    #[test]
+    fn the_library_names_the_track_and_brings_its_waveform() {
+        use super::super::mixxx_library::testing::{add_track, analysis_file, library};
+        let (dir, database) = library();
+        add_track(&database, 1, Some("Neon Tide"), "/Music/Mara Voss - Neon Tide.flac", 372.4, 124.0);
+        database.execute("INSERT INTO track_analysis VALUES (8, 101, '1')", []).expect("inserts");
+
+        let (tx, mut events) = mpsc::unbounded_channel();
+        let mut reader = Reader::new(tx);
+        let now = Instant::now();
+        let report = decode(&fixture()[0]).expect("valid");
+        let lookup = reader.handle(&report, now).expect("a new track is looked up");
+        assert_eq!(lookup, Lookup { deck: 2, load: 3, duration_s: 372.4, bpm: 124.0 });
+        assert_eq!(reader.handle(&report, now + Duration::from_millis(50)), None, "not asked again at once");
+
+        // Mixxx is still analysing: the title comes first, the waveform later.
+        let track = mixxx_library::find_track(&dir, lookup.duration_s, lookup.bpm).expect("reads").expect("found");
+        reader.found(&lookup, track.clone());
+        reader.found(&lookup, track);
+        let loads = |events: &[SourceEvent]| -> Vec<(String, String, bool)> {
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    SourceEvent::TrackLoaded { deck: 2, meta, waveform, .. } => Some((meta.title.clone(), meta.file_name.clone(), waveform.is_some())),
+                    _ => None,
+                })
+                .collect()
+        };
+        let named = ("Neon Tide".to_string(), "Mara Voss - Neon Tide.flac".to_string());
+        assert_eq!(
+            loads(&drain(&mut events)),
+            vec![("Mixxx deck 2".to_string(), String::new(), false), (named.0.clone(), named.1.clone(), false)],
+            "the same answer twice is announced once"
+        );
+
+        let again = reader.handle(&report, now + LOOKUP_EVERY).expect("asked again while there is no waveform");
+        let band = vec![9u8; 882];
+        std::fs::write(dir.join("analysis/8"), analysis_file(441.0, &band, &band, &band)).expect("writes");
+        let track = mixxx_library::find_track(&dir, again.duration_s, again.bpm).expect("reads").expect("found");
+        reader.found(&again, track);
+        let sent = drain(&mut events);
+        assert_eq!(loads(&sent), vec![(named.0, named.1, true)]);
+        // Tempo and key from the script survive the renaming.
+        assert!(sent.iter().any(|event| matches!(event, SourceEvent::TrackLoaded { meta, .. } if meta.bpm_original == 124.0 && meta.key.is_some())));
+        assert_eq!(reader.handle(&report, now + LOOKUP_EVERY * 5), None, "nothing left to ask");
+
+        // An answer for a track that has since been replaced is dropped.
+        let mut next = report.clone();
+        next.load = 4;
+        reader.handle(&next, now + LOOKUP_EVERY * 6);
+        drain(&mut events);
+        reader.found(&again, mixxx_library::find_track(&dir, 372.4, 124.0).expect("reads").expect("found"));
+        assert!(loads(&drain(&mut events)).is_empty());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn the_library_is_not_asked_for_ever() {
+        let (tx, _events) = mpsc::unbounded_channel();
+        let mut reader = Reader::new(tx);
+        let start = Instant::now();
+        let report = decode(&fixture()[0]).expect("valid");
+        let asked = (0..200u32).filter(|&second| reader.handle(&report, start + Duration::from_secs(second.into())).is_some()).count();
+        assert_eq!(asked, usize::from(LOOKUP_ATTEMPTS));
     }
 
     #[test]

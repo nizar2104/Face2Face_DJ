@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use super::{DeckStateEvent, SourceEvent, SourceStatus, TrackMeta};
+use crate::waveform::Waveform;
 use crate::protocol::MAX_DECKS;
 
 /// How often a reader calls [`DeckBoard::tick`]. The Viewer interpolates
@@ -32,6 +33,7 @@ pub struct DeckUpdate {
 struct Slot {
     meta: TrackMeta,
     file_path: Option<PathBuf>,
+    waveform: Option<Waveform>,
     /// The playhead was at `pos_s` at `at`.
     pos_s: f64,
     at: Instant,
@@ -108,6 +110,11 @@ impl DeckBoard {
     /// A track is on `deck` (1 to 4; other numbers are ignored): paused at
     /// the start until the next [`DeckBoard::update`].
     pub fn load(&mut self, deck: u8, meta: TrackMeta, file_path: Option<PathBuf>) {
+        self.load_with(deck, meta, file_path, None);
+    }
+
+    /// [`DeckBoard::load`] for a reader that has the track's waveform.
+    pub fn load_with(&mut self, deck: u8, meta: TrackMeta, file_path: Option<PathBuf>, waveform: Option<Waveform>) {
         let Some(place) = usize::from(deck).checked_sub(1).and_then(|index| self.slots.get_mut(index)) else {
             return;
         };
@@ -115,6 +122,7 @@ impl DeckBoard {
         *place = Some(Slot {
             meta: meta.clone(),
             file_path: file_path.clone(),
+            waveform: waveform.clone(),
             pos_s: 0.0,
             at: Instant::now(),
             bpm_current,
@@ -122,7 +130,7 @@ impl DeckBoard {
             is_master: false,
             on_air: false,
         });
-        self.send(SourceEvent::TrackLoaded { deck, meta, file_path, waveform: None });
+        self.send(SourceEvent::TrackLoaded { deck, meta, file_path, waveform });
     }
 
     /// Corrects what is known about the loaded track (a duration or tempo that
@@ -139,9 +147,9 @@ impl DeckBoard {
         slot.pos_s = slot.pos_at(now);
         slot.at = now;
         slot.meta = meta.clone();
-        let (file_path, state) = (slot.file_path.clone(), slot.state(deck, now));
+        let (file_path, waveform, state) = (slot.file_path.clone(), slot.waveform.clone(), slot.state(deck, now));
         // `deck_loaded` resets the Viewer's deck, so the state follows it.
-        self.send(SourceEvent::TrackLoaded { deck, meta, file_path, waveform: None });
+        self.send(SourceEvent::TrackLoaded { deck, meta, file_path, waveform });
         self.send(state);
     }
 

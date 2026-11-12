@@ -8,6 +8,7 @@
 pub mod board;
 pub mod key;
 pub mod mixxx;
+pub mod mixxx_library;
 pub mod mock;
 pub mod osc;
 pub mod prolink;
@@ -43,7 +44,7 @@ impl SourceKind {
             SourceKind::Traktor => Some(Box::new(traktor::TraktorSource::default())),
             SourceKind::Rekordbox => Some(Box::new(rekordbox::RekordboxSource::default())),
             SourceKind::ProDjLink => Some(Box::new(prolink::ProDjLinkSource::default())),
-            SourceKind::Mixxx => Some(Box::new(mixxx::MixxxSource)),
+            SourceKind::Mixxx => Some(Box::new(mixxx::MixxxSource::default())),
         }
     }
 }

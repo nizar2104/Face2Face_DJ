@@ -14,7 +14,7 @@ written to a library, a music file or a player.
 | Traktor Pro 3 / 4 | QML mod that POSTs JSON to `localhost:8080` | [traktor-api-client](https://github.com/ErikMinekus/traktor-api-client) into Traktor | No |
 | rekordbox (Performance mode) | [rkbx_link](https://github.com/grufkork/rkbx_link) reads rekordbox's memory and sends OSC | rkbx_link, and a licence for recent rekordbox versions | No |
 | Pro DJ Link (CDJ, XDJ) | We join the network as a virtual player, like PRO DJ LINK Bridge | Nothing | No |
-| Mixxx 2.4+ | Controller mapping that sends MIDI | The mapping in `tools/mixxx-mapping` | No |
+| Mixxx 2.4+ | Controller mapping that sends MIDI, plus Mixxx's library for titles and waveforms | The mapping in `tools/mixxx-mapping` | Yes: Mixxx 2.5.6 on macOS, Mac to Windows PC |
 
 "No" means: built from the published formats and tested with hand-built
 messages (`cargo test`, `npm test`), and each reader was run for real with a
@@ -25,9 +25,10 @@ the scripting API definitions inside Mixxx 2.5.6.
 
 Common to all readers:
 
-- **No waveform yet.** Waveforms come from analysing the audio file
-  (Milestone 2). Until then the Viewer shows "No waveform" for real decks, with
-  title, tempo, key, time, play, master and on-air working.
+- **No waveform yet, except for Mixxx.** Waveforms come from analysing the
+  audio file (Milestone 2). Until then the Viewer shows "No waveform" for real
+  decks, with title, tempo, key, time, play, master and on-air working. Mixxx
+  is the exception: its own waveform is read from its library.
 - **Position between reports.** DJ software reports the playhead far less often
   than the Viewer draws. The Sender carries it forward at the deck's tempo
   between reports (`sources/board.rs`) and corrects on each new one.
@@ -142,26 +143,43 @@ connections nor write files. They can send MIDI: the mapping's script sends each
 deck's state 20 times a second as a system-exclusive message, and Face2Face DJ
 is the MIDI port it sends to. The script only reads Mixxx controls.
 
-Set-up, once:
+Set-up, once.
+
+**Windows:** close Mixxx, then double-click `Setup Mixxx (Windows).cmd` in
+`tools/mixxx-mapping` (it is also in the `Mixxx set-up` folder of the Windows
+download). It copies the mapping, switches the controller on in Mixxx's
+settings, and takes you through creating the MIDI port. Windows cannot create
+a MIDI port by itself, so the port comes from
+[loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html), which the
+script offers to install. Adding the port named `Face2Face DJ` in loopMIDI is
+the one step done by hand (loopMIDI has no command for it); tick loopMIDI's
+autostart so the port survives a restart of the PC.
+
+**macOS and Linux:**
 
 1. Copy `Face2Face-DJ.midi.xml` and `Face2Face-DJ.js` from `tools/mixxx-mapping`
    into Mixxx's user controller folder (Preferences > Controllers > "Open User Mapping Folder").
-2. The MIDI port. macOS and Linux: nothing to do, Face2Face DJ creates a port
-   named "Face2Face DJ". Windows cannot create one: install
-   [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) and add a port named `Face2Face DJ`.
+2. Start Face2Face DJ and choose **Mixxx**: it creates the MIDI port
+   "Face2Face DJ" itself. Then (re)start Mixxx.
+3. In Mixxx: Preferences > Controllers > "Face2Face DJ" > tick Enabled, and
+   choose the "Face2Face DJ" mapping. Remembered after the first time.
 
 Each time:
 
-1. Start Face2Face DJ and choose **Mixxx** *before* opening Mixxx: Mixxx only
-   looks for MIDI devices when it starts.
-2. In Mixxx: Preferences > Controllers > "Face2Face DJ" > tick Enabled, and
-   choose the "Face2Face DJ" mapping (remembered after the first time).
+1. macOS and Linux: start Face2Face DJ and choose **Mixxx** *before* opening
+   Mixxx. Mixxx only looks for MIDI devices when it starts, and our port is new
+   each time Face2Face DJ starts, so Mixxx has to be restarted whenever
+   Face2Face DJ was. Windows: the loopMIDI port is always there, so the order
+   does not matter.
 
 Limits:
 
-- **No title or artist.** Mixxx scripts cannot read text. Decks are named
-  "Mixxx deck 1" and so on; tempo, key, position, length, play, sync leader and
-  on-air are real. (Matching the deck against Mixxx's library database could
-  fill the names in later.)
+- **Title, artist and waveform come from Mixxx's library**, not from the
+  script (scripts cannot read text). The track is found in `mixxxdb.sqlite` by
+  its length, and by tempo if two tracks are equally long; the waveform is the
+  one Mixxx analysed. Read-only. A deck shows "Mixxx deck 1" until the track is
+  found, and stays that way for a track that is not in the library or that
+  shares length and tempo with another. The waveform appears once Mixxx has
+  finished analysing a newly loaded track.
 - **Master** is Mixxx's sync leader, so there is none unless sync is in use.
 - **On air**: channel fader up and the crossfader not fully on the other side.

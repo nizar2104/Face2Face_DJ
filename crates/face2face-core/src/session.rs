@@ -121,12 +121,16 @@ impl Session {
                 self.send(Frame::Text(text));
             }
             SourceEvent::TrackLoaded { deck, meta, file_path: _, waveform } => {
-                // Ids come from artist and title until audio files are hashed
-                // (Milestone 2). Only the mock supplies a waveform so far, hence
-                // the `mock` prefixes that PROTOCOL.md documents for it.
-                let hash = track_hash(&meta.artist, &meta.title);
-                let waveform_id = format!("mockwf-{hash:08x}");
-                let track_id = if waveform.is_some() { format!("mock-{hash:08x}") } else { format!("trk-{hash:08x}") };
+                // Ids come from what is known about the track until audio files
+                // are hashed (Milestone 2). The Viewer keeps waveforms by id, so
+                // the length is part of it: two tracks may share a title.
+                let hash = track_hash(&meta.artist, &format!("{}\0{:.3}", meta.title, meta.duration_s));
+                let mock = lock(&self.inner).source_status.as_ref().is_some_and(|(status, _)| status.software == "mock");
+                let (track_id, waveform_id) = if mock {
+                    (format!("mock-{hash:08x}"), format!("mockwf-{hash:08x}"))
+                } else {
+                    (format!("trk-{hash:08x}"), format!("wf-{hash:08x}"))
+                };
                 let loaded: Arc<str> = Message::DeckLoaded {
                     deck,
                     track: TrackInfo {
