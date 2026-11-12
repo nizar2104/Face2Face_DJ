@@ -6,11 +6,14 @@
 //! system-exclusive message, and this reader is the MIDI port it sends to.
 //! The message layout is documented in the script, `Face2Face-DJ.js`.
 //!
-//! The port: an existing MIDI input whose name contains "Face2Face" is used
-//! if there is one (a loopMIDI port on Windows, an IAC bus on macOS).
-//! Otherwise, on macOS and Linux, we create a virtual port named
-//! "Face2Face DJ". Mixxx lists MIDI devices when it starts, so the port must
-//! exist before Mixxx is opened (docs/SOURCES.md).
+//! The port. On Windows, where a MIDI port can often be opened by one program
+//! only, we listen on the port whose name contains "Face2Face": a loopMIDI
+//! port the user creates. On macOS and Linux several programs can share a
+//! port, so we listen on every MIDI input there is (only our own messages are
+//! acted on) and also create a virtual port named "Face2Face DJ". The virtual
+//! port needs no set-up but is new each time we start, and Mixxx only looks
+//! for ports when it starts. A port that outlives us, such as the macOS IAC
+//! bus, does not have that weakness (docs/SOURCES.md).
 //!
 //! What Mixxx scripts cannot read: which track is on a deck. That, with the
 //! title, artist and Mixxx's own waveform, is looked up in Mixxx's library by
@@ -152,6 +155,8 @@ struct Reader {
     last_message: Option<Instant>,
     /// Whether Mixxx is sending, and how many decks it has.
     reported: (bool, u8),
+    /// What stands in the way of titles and waveforms, shown with the status.
+    library_note: Option<String>,
 }
 
 impl Reader {
@@ -162,16 +167,46 @@ impl Reader {
             lookups: [LookupProgress::default(); MAX_DECKS as usize],
             last_message: None,
             reported: (false, 2),
+            library_note: None,
         };
         reader.board.status(status(false, 2, "waiting for Mixxx".to_string()));
         reader
     }
 
+    fn status_text(&self, connected: bool) -> String {
+        match (connected, &self.library_note) {
+            (false, _) => "waiting for Mixxx".to_string(),
+            (true, None) => "running".to_string(),
+            (true, Some(note)) => format!("running, {note}"),
+        }
+    }
+
     fn report(&mut self, connected: bool, decks: u8) {
         if self.reported != (connected, decks) {
             self.reported = (connected, decks);
-            let text = if connected { "running" } else { "waiting for Mixxx" };
-            self.board.status(status(connected, decks, text.to_string()));
+            self.board.status(status(connected, decks, self.status_text(connected)));
+        }
+    }
+
+    /// Says (or stops saying) why titles and waveforms are missing.
+    fn note_library(&mut self, note: Option<String>) {
+        if self.library_note != note {
+            self.library_note = note;
+            let (connected, decks) = self.reported;
+            self.board.status(status(connected, decks, self.status_text(connected)));
+        }
+    }
+
+    /// The outcome of a [`Lookup`]: the track, no such track, or why the
+    /// library could not be read.
+    fn answered(&mut self, lookup: &Lookup, answer: Result<Option<LibraryTrack>, String>) {
+        match answer {
+            Ok(Some(track)) => {
+                self.note_library(None);
+                self.found(lookup, track);
+            }
+            Ok(None) => self.note_library(Some(format!("the track on deck {} is not in Mixxx's library", lookup.deck))),
+            Err(error) => self.note_library(Some(format!("cannot read Mixxx's library: {error}"))),
         }
     }
 
@@ -263,49 +298,92 @@ impl Reader {
     }
 }
 
-/// The open MIDI port. Dropping it closes the port.
+/// The open MIDI ports. Dropping this closes them.
 struct Port {
+    /// What we listen on, for the log.
     name: String,
-    _receiving: MidiInputConnection<()>,
-    /// The other half of a virtual port, see [`open_port`]. Nothing is sent on it.
+    _receiving: Vec<MidiInputConnection<()>>,
+    /// The other half of the virtual port, see [`open_port`]. Nothing is sent on it.
     _sending: Option<MidiOutputConnection>,
 }
 
-/// Opens the MIDI port and forwards everything received on it.
+/// Whether to listen on an existing MIDI input of this name.
+fn listens_on(name: &str) -> bool {
+    // Windows: ours only. Opening someone's controller could take it away
+    // from the DJ software.
+    cfg!(not(windows)) || name.to_lowercase().contains(PORT_NAME_MATCH)
+}
+
+/// Opens the MIDI ports and forwards everything received on them.
 fn open_port(received: mpsc::UnboundedSender<Vec<u8>>) -> Result<Port, String> {
-    let mut input = MidiInput::new(PORT_NAME).map_err(|error| format!("MIDI is not available: {error}"))?;
-    input.ignore(Ignore::None); // system-exclusive messages are ignored by default
-    let forward = move |_time: u64, bytes: &[u8], _: &mut ()| {
-        let _ = received.send(bytes.to_vec());
-    };
-    let existing = input.ports().into_iter().find_map(|port| {
-        let name = input.port_name(&port).ok()?;
-        name.to_lowercase().contains(PORT_NAME_MATCH).then_some((port, name))
-    });
-    if let Some((port, name)) = existing {
-        let connection = input.connect(&port, "from Mixxx", forward, ()).map_err(|error| format!("cannot open MIDI port {name}: {error}"))?;
-        return Ok(Port { name, _receiving: connection, _sending: None });
+    let unavailable = |error: midir::InitError| format!("MIDI is not available: {error}");
+    let probe = MidiInput::new(PORT_NAME).map_err(unavailable)?;
+    let mut connections = Vec::new();
+    let mut names = Vec::new();
+    for port in probe.ports() {
+        let Ok(name) = probe.port_name(&port) else { continue };
+        if !listens_on(&name) {
+            continue;
+        }
+        let mut input = MidiInput::new(PORT_NAME).map_err(unavailable)?;
+        input.ignore(Ignore::None); // system-exclusive messages are ignored by default
+        let forward = received.clone();
+        let opened = input.connect(
+            &port,
+            "from Mixxx",
+            move |_time: u64, bytes: &[u8], _: &mut ()| {
+                let _ = forward.send(bytes.to_vec());
+            },
+            (),
+        );
+        match opened {
+            Ok(connection) => {
+                connections.push(connection);
+                names.push(name);
+            }
+            Err(error) => tracing::warn!("Mixxx: cannot listen on MIDI port {name}: {error}"),
+        }
     }
+
     #[cfg(unix)]
-    {
+    let sending = {
         use midir::os::unix::{VirtualInput, VirtualOutput};
-        let connection = input.create_virtual(PORT_NAME, forward, ()).map_err(|error| format!("cannot create a MIDI port: {error}"))?;
+        let mut input = MidiInput::new(PORT_NAME).map_err(unavailable)?;
+        input.ignore(Ignore::None);
+        let forward = received;
+        let created = input.create_virtual(
+            PORT_NAME,
+            move |_time: u64, bytes: &[u8], _: &mut ()| {
+                let _ = forward.send(bytes.to_vec());
+            },
+            (),
+        );
+        match created {
+            Ok(connection) => {
+                connections.push(connection);
+                names.push(PORT_NAME.to_string());
+            }
+            Err(error) => tracing::warn!("Mixxx: cannot create a MIDI port: {error}"),
+        }
         // Mixxx lists a MIDI device by its input and does not offer one that
         // can only be sent to. So the port gets a second half of the same
         // name for Mixxx to pair it with, although we never send on it.
-        let sending = midir::MidiOutput::new(PORT_NAME)
-            .ok()
-            .and_then(|output| output.create_virtual(PORT_NAME).ok());
+        let sending = midir::MidiOutput::new(PORT_NAME).ok().and_then(|output| output.create_virtual(PORT_NAME).ok());
         if sending.is_none() {
             tracing::warn!("Mixxx: could not create the sending half of the MIDI port; Mixxx may not list it");
         }
-        Ok(Port { name: PORT_NAME.to_string(), _receiving: connection, _sending: sending })
-    }
+        sending
+    };
     #[cfg(not(unix))]
-    {
-        let _ = forward;
-        Err(format!("no MIDI port named \"{PORT_NAME}\": create one with loopMIDI, then start again"))
+    let sending = {
+        drop(received);
+        None
+    };
+
+    if connections.is_empty() {
+        return Err(format!("no MIDI port named \"{PORT_NAME}\": create one with loopMIDI"));
     }
+    Ok(Port { name: names.join(", "), _receiving: connections, _sending: sending })
 }
 
 impl DeckSource for MixxxSource {
@@ -350,7 +428,10 @@ impl DeckSource for MixxxSource {
             if reported {
                 reader.board.status(status(false, 2, "waiting for Mixxx".to_string()));
             }
-            let (found_tx, mut found_rx) = mpsc::unbounded_channel::<(Lookup, LibraryTrack)>();
+            if self.library_dir.is_none() {
+                reader.note_library(Some("Mixxx's library was not found: no titles or waveforms".to_string()));
+            }
+            let (found_tx, mut found_rx) = mpsc::unbounded_channel::<(Lookup, Result<Option<LibraryTrack>, String>)>();
             let mut ticks = tokio::time::interval(TICK);
             ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
@@ -362,17 +443,12 @@ impl DeckSource for MixxxSource {
                             let found = found_tx.clone();
                             // Reading the database and a waveform of a few megabytes blocks.
                             tokio::task::spawn_blocking(move || {
-                                match mixxx_library::find_track(&dir, lookup.duration_s, lookup.bpm) {
-                                    Ok(Some(track)) => {
-                                        let _ = found.send((lookup, track));
-                                    }
-                                    Ok(None) => {}
-                                    Err(error) => tracing::warn!("Mixxx: cannot read the library: {error:#}"),
-                                }
+                                let answer = mixxx_library::find_track(&dir, lookup.duration_s, lookup.bpm);
+                                let _ = found.send((lookup, answer.map_err(|error| format!("{error:#}"))));
                             });
                         }
                     }
-                    Some((lookup, track)) = found_rx.recv() => reader.found(&lookup, track),
+                    Some((lookup, answer)) = found_rx.recv() => reader.answered(&lookup, answer),
                     _ = ticks.tick() => reader.tick(Instant::now()),
                 }
             }
@@ -539,6 +615,34 @@ mod tests {
         reader.found(&again, mixxx_library::find_track(&dir, 372.4, 124.0).expect("reads").expect("found"));
         assert!(loads(&drain(&mut events)).is_empty());
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn the_status_says_why_titles_are_missing() {
+        let (tx, mut events) = mpsc::unbounded_channel();
+        let mut reader = Reader::new(tx);
+        let report = decode(&fixture()[0]).expect("valid");
+        let lookup = reader.handle(&report, Instant::now()).expect("a look-up");
+        let statuses = |events: &[SourceEvent]| -> Vec<String> {
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    SourceEvent::Status(status) => Some(status.reader_status.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        drain(&mut events);
+
+        reader.answered(&lookup, Ok(None));
+        reader.answered(&lookup, Ok(None));
+        assert_eq!(statuses(&drain(&mut events)), vec!["running, the track on deck 2 is not in Mixxx's library"], "said once");
+        reader.answered(&lookup, Err("unable to open database file".to_string()));
+        assert_eq!(statuses(&drain(&mut events)), vec!["running, cannot read Mixxx's library: unable to open database file"]);
+        // Once a track is found the note goes away.
+        let track = LibraryTrack { title: "Neon Tide".to_string(), artist: String::new(), album: String::new(), file_path: "/a.flac".into(), waveform: None };
+        reader.answered(&lookup, Ok(Some(track)));
+        assert_eq!(statuses(&drain(&mut events)), vec!["running"]);
     }
 
     #[test]

@@ -155,22 +155,31 @@ script offers to install. Adding the port named `Face2Face DJ` in loopMIDI is
 the one step done by hand (loopMIDI has no command for it); tick loopMIDI's
 autostart so the port survives a restart of the PC.
 
-**macOS and Linux:**
+**macOS:**
 
 1. Copy `Face2Face-DJ.midi.xml` and `Face2Face-DJ.js` from `tools/mixxx-mapping`
    into Mixxx's user controller folder (Preferences > Controllers > "Open User Mapping Folder").
-2. Start Face2Face DJ and choose **Mixxx**: it creates the MIDI port
-   "Face2Face DJ" itself. Then (re)start Mixxx.
-3. In Mixxx: Preferences > Controllers > "Face2Face DJ" > tick Enabled, and
-   choose the "Face2Face DJ" mapping. Remembered after the first time.
+2. Turn the IAC bus on, if it is not: open the app Audio MIDI Setup, Window >
+   Show MIDI Studio, double-click **IAC Driver**, tick "Device is online".
+3. In Mixxx: Preferences > Controllers > **IAC Driver Bus 1** > tick Enabled,
+   Load Mapping "Face2Face DJ", Apply. Remembered from then on.
 
-Each time:
+Face2Face DJ listens on every MIDI input of the Mac and acts only on its own
+messages, so it finds the IAC bus by itself. The IAC bus is always there, so
+it does not matter which of Mixxx and Face2Face DJ starts first, or whether
+one of them is restarted.
 
-1. macOS and Linux: start Face2Face DJ and choose **Mixxx** *before* opening
-   Mixxx. Mixxx only looks for MIDI devices when it starts, and our port is new
-   each time Face2Face DJ starts, so Mixxx has to be restarted whenever
-   Face2Face DJ was. Windows: the loopMIDI port is always there, so the order
-   does not matter.
+Without the IAC bus it still works: Face2Face DJ also creates a port of its
+own, "Face2Face DJ", which shows up in Mixxx's controller list the same way.
+That port is new each time Face2Face DJ starts, and Mixxx only looks for ports
+when it starts, so Mixxx then has to be restarted whenever Face2Face DJ was.
+
+**Linux:** as macOS without the IAC bus: enable the mapping on the
+"Face2Face DJ" port, and start Face2Face DJ before Mixxx.
+
+**If titles or waveforms are missing**, the status at the top left of the
+sending laptop's window says why: Mixxx's library was not found, could not be
+read, or does not contain the track on that deck.
 
 Limits:
 
