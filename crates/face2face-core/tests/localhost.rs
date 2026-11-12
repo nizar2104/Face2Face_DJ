@@ -274,3 +274,36 @@ async fn a_sender_on_the_network_needs_a_real_code() {
     assert!(Sender::start(0, SourceKind::Mock, short).await.is_err());
 }
 
+#[tokio::test]
+async fn a_viewer_that_goes_silent_is_dropped() {
+    let sender = Sender::start_mock(0, 2, false).await.expect("sender starts");
+    let mut client = connect(sender.port()).await;
+    send(&mut client, &viewer_hello(PROTOCOL_VERSION)).await;
+    assert!(matches!(next(&mut client).await, Ok(Message::Hello { .. })));
+    assert_eq!(sender.info().viewers, 1);
+
+    // The connection stays open, but the Viewer never pings: a laptop that
+    // went to sleep. A real Viewer pings every 2 s.
+    let dropped = tokio::time::timeout(Duration::from_secs(12), async {
+        while sender.info().viewers > 0 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await;
+    assert!(dropped.is_ok(), "the Sender still counts the silent Viewer");
+    drop(client);
+    sender.stop().await;
+}
+
+#[tokio::test]
+async fn a_connection_that_never_speaks_websocket_is_closed() {
+    use tokio::io::AsyncReadExt;
+    let sender = Sender::start_mock(0, 2, false).await.expect("sender starts");
+    let mut raw = TcpStream::connect(("127.0.0.1", sender.port())).await.expect("connects");
+    let mut byte = [0u8; 1];
+    // Says nothing; the Sender hangs up (read returns 0 bytes or an error).
+    let closed = tokio::time::timeout(Duration::from_secs(10), raw.read(&mut byte)).await;
+    assert!(matches!(closed, Ok(Ok(0)) | Ok(Err(_))), "still open: {closed:?}");
+    sender.stop().await;
+}
+

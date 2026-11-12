@@ -34,7 +34,7 @@ use tokio::time::MissedTickBehavior;
 
 use super::board::{DeckBoard, DeckUpdate, TICK};
 use super::key::parse_key;
-use super::{DeckSource, SourceEvent, SourceStatus, TrackMeta};
+use super::{DeckSource, SourceEvent, SourceStatus, TrackMeta, RETRY_OPEN};
 use crate::lock;
 use crate::protocol::MAX_DECKS;
 
@@ -212,14 +212,25 @@ impl DeckSource for TraktorSource {
     fn spawn(self: Box<Self>, events: mpsc::UnboundedSender<SourceEvent>) -> JoinHandle<()> {
         tokio::spawn(async move {
             let reader: Shared = Arc::new(Mutex::new(Reader::new(events)));
-            let listener = match TcpListener::bind(self.listen).await {
-                Ok(listener) => listener,
-                Err(error) => {
-                    let message = format!("cannot listen on {}: {error}", self.listen);
-                    lock(&reader).board.status(status(false, 2, message));
-                    return;
+            // The port may be taken for a while (8080 is popular): say so once,
+            // then keep trying, so the reader recovers without being restarted.
+            let mut reported = false;
+            let listener = loop {
+                match TcpListener::bind(self.listen).await {
+                    Ok(listener) => break listener,
+                    Err(error) => {
+                        if !reported {
+                            let message = format!("cannot listen on {}: {error}", self.listen);
+                            lock(&reader).board.status(status(false, 2, message));
+                            reported = true;
+                        }
+                        tokio::time::sleep(RETRY_OPEN).await;
+                    }
                 }
             };
+            if reported {
+                lock(&reader).board.status(status(false, 2, "waiting for Traktor".to_string()));
+            }
             let ticking = Arc::clone(&reader);
             let ticker = tokio::spawn(async move {
                 let mut ticks = tokio::time::interval(TICK);
@@ -381,5 +392,32 @@ mod tests {
         let sent = drain(&mut events);
         task.abort();
         assert!(sent.iter().any(|event| matches!(event, SourceEvent::TrackLoaded { deck: 1, meta, .. } if meta.title == "Neon Tide")));
+    }
+
+    #[tokio::test]
+    async fn a_busy_port_is_reported_and_taken_once_it_is_free() {
+        let holder = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.expect("a port");
+        let listen = holder.local_addr().expect("an address");
+        let (tx, mut events) = mpsc::unbounded_channel();
+        let task = Box::new(TraktorSource { listen }).spawn(tx);
+
+        async fn wait_for(events: &mut mpsc::UnboundedReceiver<SourceEvent>, wanted: &str) {
+            let found = tokio::time::timeout(RETRY_OPEN * 3, async {
+                loop {
+                    match events.recv().await {
+                        Some(SourceEvent::Status(status)) if status.reader_status.contains(wanted) => return,
+                        Some(_) => {}
+                        None => panic!("the reader stopped"),
+                    }
+                }
+            })
+            .await;
+            assert!(found.is_ok(), "no status containing {wanted:?}");
+        }
+        wait_for(&mut events, "cannot listen").await;
+        drop(holder);
+        wait_for(&mut events, "waiting for Traktor").await;
+        assert!(TcpStream::connect(listen).await.is_ok(), "the reader now holds the port");
+        task.abort();
     }
 }

@@ -25,7 +25,9 @@ use crate::net::pairing::{Pairing, MIN_CODE_LENGTH};
 use crate::net::transport::{serve, SenderIdentity};
 use crate::session::Session;
 use crate::sources::mock::{MockHandle, MockSource, DEMO_SESSION};
-use crate::sources::{DeckSource, SourceKind};
+use crate::sources::{DeckSource, SourceEvent, SourceKind};
+
+const READER_RESTART_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// The mock the desktop app offers: two decks with the scripted demo running.
 const MOCK_DECKS: u8 = 2;
@@ -110,6 +112,40 @@ impl Decks {
             Decks::Reader(SourceKind::ProDjLink, _) => "Pro DJ Link",
             Decks::Reader(SourceKind::Mixxx, _) => "Mixxx",
         }
+    }
+}
+
+/// Aborts the task it holds when dropped, so stopping the supervisor stops the reader.
+struct AbortOnDrop(JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Watches the running reader. A reader that ends by itself (it panicked)
+/// would leave the decks frozen while heartbeats still say "connected": the
+/// Viewers are told it stopped, and a reader for real software is started again.
+async fn supervise(
+    kind: SourceKind,
+    reader: JoinHandle<()>,
+    events: mpsc::UnboundedSender<SourceEvent>,
+    session: Arc<Session>,
+) {
+    let mut running = AbortOnDrop(reader);
+    loop {
+        let ended = (&mut running.0).await;
+        tracing::error!("the {kind:?} reader stopped: {ended:?}");
+        if let Some(mut status) = session.source_status() {
+            status.connected = false;
+            status.reader_status = "the reader stopped; restarting".to_string();
+            session.apply(SourceEvent::Status(status));
+        }
+        tokio::time::sleep(READER_RESTART_DELAY).await;
+        // The mock cannot be rebuilt here (its command handle is already out).
+        let Some(reader) = kind.reader() else { return };
+        running = AbortOnDrop(reader.spawn(events.clone()));
     }
 }
 
@@ -202,7 +238,9 @@ impl Sender {
         let pump_session = Arc::clone(&session);
         let reader_name = reader.name();
         let tasks = vec![
-            reader.spawn(events_tx),
+            // Started here, not inside the supervisor's task: a mock command
+            // issued right after `start` must find the reader already wired up.
+            tokio::spawn(supervise(source, reader.spawn(events_tx.clone()), events_tx, Arc::clone(&session))),
             tokio::spawn(async move {
                 while let Some(event) = events_rx.recv().await {
                     pump_session.apply(event);

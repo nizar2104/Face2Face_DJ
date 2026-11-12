@@ -32,7 +32,7 @@ use tokio::time::MissedTickBehavior;
 
 use super::board::{DeckBoard, DeckUpdate, TICK};
 use super::osc::{decode, OscArg, OscMessage};
-use super::{DeckSource, SourceEvent, SourceStatus, TrackMeta};
+use super::{DeckSource, SourceEvent, SourceStatus, TrackMeta, RECEIVE_ERROR_PAUSE, RETRY_OPEN};
 use crate::protocol::MAX_DECKS;
 
 /// rkbx_link's default `osc.destination`.
@@ -208,27 +208,42 @@ impl DeckSource for RekordboxSource {
     fn spawn(self: Box<Self>, events: mpsc::UnboundedSender<SourceEvent>) -> JoinHandle<()> {
         tokio::spawn(async move {
             let mut reader = Reader::new(events);
-            let socket = match UdpSocket::bind(self.listen).await {
-                Ok(socket) => socket,
-                Err(error) => {
-                    reader.board.status(SourceStatus {
-                        software: "rekordbox".to_string(),
-                        software_version: String::new(),
-                        connected: false,
-                        decks: 2,
-                        reader: "rkbx_link".to_string(),
-                        reader_status: format!("cannot listen on {}: {error}", self.listen),
-                    });
-                    return;
+            // Say once why the port cannot be opened, then keep trying.
+            let failed = |reader_status: String| SourceStatus {
+                software: "rekordbox".to_string(),
+                software_version: String::new(),
+                connected: false,
+                decks: 2,
+                reader: "rkbx_link".to_string(),
+                reader_status,
+            };
+            let mut reported = false;
+            let socket = loop {
+                match UdpSocket::bind(self.listen).await {
+                    Ok(socket) => break socket,
+                    Err(error) => {
+                        if !reported {
+                            reader.board.status(failed(format!("cannot listen on {}: {error}", self.listen)));
+                            reported = true;
+                        }
+                        tokio::time::sleep(RETRY_OPEN).await;
+                    }
                 }
             };
+            if reported {
+                reader.board.status(failed("waiting for rkbx_link".to_string()));
+            }
             let mut ticks = tokio::time::interval(TICK);
             ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
             let mut buffer = [0u8; 4096];
             loop {
                 tokio::select! {
                     received = socket.recv(&mut buffer) => {
-                        let Ok(length) = received else { continue };
+                        let Ok(length) = received else {
+                            // A socket that keeps failing must not turn into a busy loop.
+                            tokio::time::sleep(RECEIVE_ERROR_PAUSE).await;
+                            continue;
+                        };
                         let now = Instant::now();
                         for message in decode(&buffer[..length]) {
                             reader.handle(&message, now);

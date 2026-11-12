@@ -10,6 +10,7 @@ use futures_util::{Sink, SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinSet;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message as WsMessage};
 
 use crate::net::pairing::Pairing;
@@ -20,6 +21,14 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
 /// A frame that cannot be written for this long means the Viewer is gone.
 const SEND_TIMEOUT: Duration = Duration::from_secs(5);
+/// A Viewer pings every 2 s. One that has sent nothing for this long has
+/// vanished without closing (laptop asleep, cable pulled): heartbeats would
+/// keep fitting in the system's buffers for minutes, and the Sender would go
+/// on saying "partner connected".
+const VIEWER_SILENCE_LIMIT: Duration = Duration::from_secs(7);
+/// Viewers send short JSON only (hello, ping). The library's default limit of
+/// 64 MiB would apply to peers that have not even presented a pairing code.
+const MAX_VIEWER_MESSAGE: usize = 64 * 1024;
 
 /// How this Sender introduces itself in `hello`.
 #[derive(Debug, Clone)]
@@ -114,7 +123,17 @@ async fn handle_viewer(
     pairing: Option<Arc<Pairing>>,
 ) -> anyhow::Result<()> {
     stream.set_nodelay(true)?;
-    let websocket = tokio_tungstenite::accept_async(stream).await?;
+    let limits = WebSocketConfig {
+        max_message_size: Some(MAX_VIEWER_MESSAGE),
+        max_frame_size: Some(MAX_VIEWER_MESSAGE),
+        ..WebSocketConfig::default()
+    };
+    // A peer that connects and then says nothing must not hold a task for ever.
+    let handshake = tokio_tungstenite::accept_async_with_config(stream, Some(limits));
+    let Ok(websocket) = tokio::time::timeout(HELLO_TIMEOUT, handshake).await else {
+        anyhow::bail!("no WebSocket handshake within {HELLO_TIMEOUT:?}");
+    };
+    let websocket = websocket?;
     let (mut sink, mut incoming) = websocket.split();
 
     // 1. Wait for the Viewer's hello. Pings are answered even before it.
@@ -181,8 +200,11 @@ async fn handle_viewer(
 
     // 3. Stream: live frames out, pings in, a heartbeat every second.
     let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
+    let silence = tokio::time::sleep(VIEWER_SILENCE_LIMIT);
+    tokio::pin!(silence);
     loop {
         tokio::select! {
+            _ = &mut silence => anyhow::bail!("viewer silent for {VIEWER_SILENCE_LIMIT:?}"),
             frame = live.recv() => match frame {
                 Ok(frame) => send_frame(&mut sink, frame).await?,
                 Err(RecvError::Lagged(missed)) => anyhow::bail!("viewer fell {missed} frames behind"),
@@ -190,6 +212,7 @@ async fn handle_viewer(
             },
             next = incoming.next() => {
                 let Some(next) = next else { return Ok(()) };
+                silence.as_mut().reset(tokio::time::Instant::now() + VIEWER_SILENCE_LIMIT);
                 match next? {
                     WsMessage::Text(text) => {
                         if let Some(Message::Ping { t_viewer }) = Message::parse(text.as_str()) {

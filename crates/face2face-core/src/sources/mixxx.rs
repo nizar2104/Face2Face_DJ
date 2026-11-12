@@ -24,7 +24,7 @@ use tokio::time::MissedTickBehavior;
 
 use super::board::{DeckBoard, DeckUpdate, TICK};
 use super::key::key_from_pitch_class;
-use super::{DeckSource, SourceEvent, SourceStatus, TrackMeta};
+use super::{DeckSource, SourceEvent, SourceStatus, TrackMeta, RETRY_OPEN};
 use crate::protocol::MAX_DECKS;
 
 /// The name Mixxx shows for our MIDI port, and what we look for in existing ports.
@@ -226,24 +226,40 @@ impl DeckSource for MixxxSource {
     fn spawn(self: Box<Self>, events: mpsc::UnboundedSender<SourceEvent>) -> JoinHandle<()> {
         tokio::spawn(async move {
             let mut reader = Reader::new(events);
-            let (received_tx, mut received) = mpsc::unbounded_channel::<Vec<u8>>();
             // The port lives on its own thread: MIDI connections are tied to
             // the thread that made them on some systems. It closes when
             // `close` is dropped, which happens when this task ends.
-            let (close, closed) = std::sync::mpsc::channel::<()>();
-            let (opened_tx, opened) = tokio::sync::oneshot::channel();
-            std::thread::spawn(move || {
-                let port = open_port(received_tx);
-                let _ = opened_tx.send(port.as_ref().map(|(_, name)| name.clone()).map_err(String::clone));
-                let _connection = port;
-                let _ = closed.recv();
-            });
-            match opened.await {
-                Ok(Ok(name)) => tracing::info!("Mixxx: listening on MIDI port {name}"),
-                Ok(Err(error)) => return reader.board.status(status(false, 2, error)),
-                Err(_) => return reader.board.status(status(false, 2, "the MIDI thread stopped".to_string())),
+            // A port that cannot be opened (on Windows it has to be made with
+            // loopMIDI first) is reported once and tried again.
+            let mut reported = false;
+            let (mut received, _close) = loop {
+                let (received_tx, received) = mpsc::unbounded_channel::<Vec<u8>>();
+                let (close, closed) = std::sync::mpsc::channel::<()>();
+                let (opened_tx, opened) = tokio::sync::oneshot::channel();
+                std::thread::spawn(move || {
+                    let port = open_port(received_tx);
+                    let _ = opened_tx.send(port.as_ref().map(|(_, name)| name.clone()).map_err(String::clone));
+                    if let Ok(_connection) = port {
+                        let _ = closed.recv();
+                    }
+                });
+                let error = match opened.await {
+                    Ok(Ok(name)) => {
+                        tracing::info!("Mixxx: listening on MIDI port {name}");
+                        break (received, close);
+                    }
+                    Ok(Err(error)) => error,
+                    Err(_) => "the MIDI thread stopped".to_string(),
+                };
+                if !reported {
+                    reader.board.status(status(false, 2, error));
+                    reported = true;
+                }
+                tokio::time::sleep(RETRY_OPEN).await;
+            };
+            if reported {
+                reader.board.status(status(false, 2, "waiting for Mixxx".to_string()));
             }
-            let _close = close;
             let mut ticks = tokio::time::interval(TICK);
             ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {

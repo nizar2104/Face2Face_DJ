@@ -50,9 +50,18 @@ export function Sender({ link, initialSource, initialPartner, onSwitchRole }: Pr
     };
     setInfo(null);
     setError(null);
-    startSender(link, source, code).then((i) => !cancelled && setInfo(i), fail);
+    const started = (i: SenderInfo): void => {
+      if (cancelled) return;
+      setInfo(i);
+      setError(null);
+    };
+    const start = (): void => {
+      startSender(link, source, code).then(started, fail);
+    };
+    start();
     const poll = setInterval(() => {
-      senderStatus().then((i) => !cancelled && i !== null && setInfo(i), fail);
+      // No Sender (starting it failed, e.g. the port was busy): try again.
+      senderStatus().then((i) => (i !== null ? started(i) : start()), fail);
     }, 1000);
     return () => {
       cancelled = true;

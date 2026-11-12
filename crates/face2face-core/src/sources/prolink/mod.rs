@@ -39,7 +39,7 @@ use self::packet::{
 };
 use super::board::{DeckBoard, DeckUpdate, TICK};
 use super::key::parse_key;
-use super::{DeckSource, SourceEvent, SourceStatus, TrackMeta};
+use super::{DeckSource, SourceEvent, SourceStatus, TrackMeta, RECEIVE_ERROR_PAUSE, RETRY_OPEN};
 use crate::protocol::MAX_DECKS;
 
 const KEEP_ALIVE_EVERY: Duration = Duration::from_millis(1500);
@@ -338,15 +338,24 @@ impl DeckSource for ProDjLinkSource {
     fn spawn(self: Box<Self>, events: mpsc::UnboundedSender<SourceEvent>) -> JoinHandle<()> {
         tokio::spawn(async move {
             let mut link = Link::new(events, &self.device_name, self.device);
-            let sockets = bind(PORT_ANNOUNCE).and_then(|a| Ok((a, bind(PORT_BEAT)?, bind(PORT_STATUS)?)));
-            let (announce, beats, statuses) = match sockets {
-                Ok(sockets) => sockets,
-                Err(error) => {
-                    let message = format!("cannot listen on the Pro DJ Link ports: {error}");
-                    link.board.status(Link::status_message(false, 2, message));
-                    return;
+            // Say once why the ports cannot be opened, then keep trying.
+            let mut reported = false;
+            let (announce, beats, statuses) = loop {
+                match bind(PORT_ANNOUNCE).and_then(|a| Ok((a, bind(PORT_BEAT)?, bind(PORT_STATUS)?))) {
+                    Ok(sockets) => break sockets,
+                    Err(error) => {
+                        if !reported {
+                            let message = format!("cannot listen on the Pro DJ Link ports: {error}");
+                            link.board.status(Link::status_message(false, 2, message));
+                            reported = true;
+                        }
+                        tokio::time::sleep(RETRY_OPEN).await;
+                    }
                 }
             };
+            if reported {
+                link.board.status(Link::status_message(false, 2, "waiting for players".to_string()));
+            }
             let (found_tx, mut found_rx) = mpsc::unbounded_channel::<(Lookup, Option<TrackMetadata>)>();
             // Where to send our keep-alive, once a player has shown which network it is on.
             let mut announcement: Option<(SocketAddrV4, [u8; 0x36])> = None;
@@ -358,7 +367,7 @@ impl DeckSource for ProDjLinkSource {
             loop {
                 tokio::select! {
                     received = announce.recv_from(&mut a) => {
-                        let Ok((length, _)) = received else { continue };
+                        let Ok((length, _)) = received else { tokio::time::sleep(RECEIVE_ERROR_PAUSE).await; continue };
                         let Some(keep_alive) = parse_keep_alive(&a[..length]) else { continue };
                         if link.keep_alive(&keep_alive, Instant::now()) && announcement.is_none() {
                             announcement = interface_towards(keep_alive.ip).map(|(ip, broadcast, mac)| {
@@ -369,7 +378,7 @@ impl DeckSource for ProDjLinkSource {
                         }
                     }
                     received = beats.recv_from(&mut b) => {
-                        let Ok((length, _)) = received else { continue };
+                        let Ok((length, _)) = received else { tokio::time::sleep(RECEIVE_ERROR_PAUSE).await; continue };
                         let now = Instant::now();
                         if let Some(position) = parse_position(&b[..length]) {
                             link.position(position, now);
@@ -378,7 +387,7 @@ impl DeckSource for ProDjLinkSource {
                         }
                     }
                     received = statuses.recv_from(&mut s) => {
-                        let Ok((length, from)) = received else { continue };
+                        let Ok((length, from)) = received else { tokio::time::sleep(RECEIVE_ERROR_PAUSE).await; continue };
                         let (Some(status), Some(from)) = (parse_status(&s[..length]), source_ip(from)) else { continue };
                         if let Some(lookup) = link.status(status, from, Instant::now()) {
                             let found = found_tx.clone();

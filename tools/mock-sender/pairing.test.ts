@@ -3,6 +3,8 @@
 // (crates/face2face-core/tests/localhost.rs).
 
 import assert from 'node:assert/strict';
+import { createServer } from 'node:net';
+import type { Socket } from 'node:net';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { WebSocketServer } from 'ws';
@@ -80,3 +82,25 @@ test('without a code the hello carries none', async () => {
   conn.stop();
   await sender.close();
 });
+
+test('a Sender that accepts but never answers is given up on and retried', async () => {
+  // What a partner behind a silent firewall looks like, as far as a test can.
+  let attempts = 0;
+  const sockets: Socket[] = [];
+  const silent = createServer((socket) => {
+    attempts += 1;
+    sockets.push(socket);
+    socket.on('error', () => undefined);
+  });
+  await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', resolve));
+  const { port } = silent.address() as { port: number };
+  const store = new ViewerStore();
+  const conn = new ViewerConnection(store, { url: `ws://127.0.0.1:${port}`, deviceId: 'v', name: 'Viewer', appVersion: '0.1.0', os: 'test', connectTimeoutS: 0.2 });
+  conn.start();
+  await until('a second attempt', () => attempts >= 2);
+  assert.equal(store.connection, 'connecting');
+  conn.stop();
+  for (const socket of sockets) socket.destroy();
+  await new Promise((resolve) => silent.close(resolve));
+});
+

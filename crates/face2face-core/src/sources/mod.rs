@@ -48,6 +48,13 @@ impl SourceKind {
     }
 }
 
+/// How long a reader waits before trying again to open a port or device that
+/// was not available (another program had it, or it was not plugged in yet).
+pub(crate) const RETRY_OPEN: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The pause after a failed receive on a reader's socket.
+pub(crate) const RECEIVE_ERROR_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// What a source knows about a track when it is loaded. Rekordbox will leave
 /// `key` empty and get it from the library through the resolver (M4).
 #[derive(Debug, Clone, PartialEq)]
