@@ -185,8 +185,10 @@ Limits:
 
 - **Title, artist and waveform come from Mixxx's library**, not from the
   script (scripts cannot read text). The track is found in `mixxxdb.sqlite` by
-  its length, and by tempo if two tracks are equally long; the waveform is the
-  one Mixxx analysed. Read-only. A deck shows "Mixxx deck 1" until the track is
+  its tempo and key and the closest length (within 0.15 s: the library's length
+  lags behind the deck's for a newly loaded file); the waveform is the one
+  Mixxx analysed. Read-only. `cargo run --example mixxx_lookup` asks the
+  library the same question from a terminal. A deck shows "Mixxx deck 1" until the track is
   found, and stays that way for a track that is not in the library or that
   shares length and tempo with another. The waveform appears once Mixxx has
   finished analysing a newly loaded track.

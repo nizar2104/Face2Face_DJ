@@ -44,9 +44,12 @@ const HEADER: [u8; 5] = [0xf0, 0x7d, 0x46, 0x32, 0x01];
 const MESSAGE_LENGTH: usize = 25;
 const DISCONNECTED: Duration = Duration::from_secs(3);
 /// Mixxx analyses a track when it is first loaded, and only then has its
-/// waveform. So a look-up that finds none is repeated for about a minute.
+/// waveform. So a look-up that finds none is repeated: every few seconds for
+/// the first minute, then now and then for as long as the track stays loaded
+/// (Mixxx can take its time writing a new track into the library).
 const LOOKUP_EVERY: Duration = Duration::from_secs(3);
-const LOOKUP_ATTEMPTS: u8 = 20;
+const LOOKUP_QUICK_ATTEMPTS: u8 = 20;
+const LOOKUP_SLOWLY_EVERY: Duration = Duration::from_secs(30);
 
 pub struct MixxxSource {
     /// The folder with Mixxx's library, for titles and waveforms. `None`: there is none to read.
@@ -67,6 +70,8 @@ struct Lookup {
     load: u8,
     duration_s: f64,
     bpm: f64,
+    /// Mixxx's number for the key, 0 if unknown.
+    key: u8,
 }
 
 /// How far the look-up for the track on a deck has got.
@@ -258,13 +263,14 @@ impl Reader {
         self.board.update_at(deck, now, update);
 
         let progress = &mut self.lookups[index];
-        let due = !progress.done && progress.attempts < LOOKUP_ATTEMPTS && progress.next.is_none_or(|next| now >= next);
+        let due = !progress.done && progress.next.is_none_or(|next| now >= next);
         if !due || report.duration_s <= 0.0 {
             return None;
         }
-        progress.attempts += 1;
-        progress.next = Some(now + LOOKUP_EVERY);
-        Some(Lookup { deck, load: report.load, duration_s: report.duration_s, bpm: report.bpm_track })
+        progress.attempts = progress.attempts.saturating_add(1);
+        let wait = if progress.attempts < LOOKUP_QUICK_ATTEMPTS { LOOKUP_EVERY } else { LOOKUP_SLOWLY_EVERY };
+        progress.next = Some(now + wait);
+        Some(Lookup { deck, load: report.load, duration_s: report.duration_s, bpm: report.bpm_track, key: report.key })
     }
 
     /// What the library knows about the track a [`Lookup`] asked for.
@@ -443,7 +449,7 @@ impl DeckSource for MixxxSource {
                             let found = found_tx.clone();
                             // Reading the database and a waveform of a few megabytes blocks.
                             tokio::task::spawn_blocking(move || {
-                                let answer = mixxx_library::find_track(&dir, lookup.duration_s, lookup.bpm);
+                                let answer = mixxx_library::find_track(&dir, lookup.duration_s, lookup.bpm, lookup.key);
                                 let _ = found.send((lookup, answer.map_err(|error| format!("{error:#}"))));
                             });
                         }
@@ -573,11 +579,11 @@ mod tests {
         let now = Instant::now();
         let report = decode(&fixture()[0]).expect("valid");
         let lookup = reader.handle(&report, now).expect("a new track is looked up");
-        assert_eq!(lookup, Lookup { deck: 2, load: 3, duration_s: 372.4, bpm: 124.0 });
+        assert_eq!(lookup, Lookup { deck: 2, load: 3, duration_s: 372.4, bpm: 124.0, key: 22 });
         assert_eq!(reader.handle(&report, now + Duration::from_millis(50)), None, "not asked again at once");
 
         // Mixxx is still analysing: the title comes first, the waveform later.
-        let track = mixxx_library::find_track(&dir, lookup.duration_s, lookup.bpm).expect("reads").expect("found");
+        let track = mixxx_library::find_track(&dir, lookup.duration_s, lookup.bpm, lookup.key).expect("reads").expect("found");
         reader.found(&lookup, track.clone());
         reader.found(&lookup, track);
         let loads = |events: &[SourceEvent]| -> Vec<(String, String, bool)> {
@@ -599,7 +605,7 @@ mod tests {
         let again = reader.handle(&report, now + LOOKUP_EVERY).expect("asked again while there is no waveform");
         let band = vec![9u8; 882];
         std::fs::write(dir.join("analysis/8"), analysis_file(441.0, &band, &band, &band)).expect("writes");
-        let track = mixxx_library::find_track(&dir, again.duration_s, again.bpm).expect("reads").expect("found");
+        let track = mixxx_library::find_track(&dir, again.duration_s, again.bpm, again.key).expect("reads").expect("found");
         reader.found(&again, track);
         let sent = drain(&mut events);
         assert_eq!(loads(&sent), vec![(named.0, named.1, true)]);
@@ -612,7 +618,7 @@ mod tests {
         next.load = 4;
         reader.handle(&next, now + LOOKUP_EVERY * 6);
         drain(&mut events);
-        reader.found(&again, mixxx_library::find_track(&dir, 372.4, 124.0).expect("reads").expect("found"));
+        reader.found(&again, mixxx_library::find_track(&dir, 372.4, 124.0, 22).expect("reads").expect("found"));
         assert!(loads(&drain(&mut events)).is_empty());
         std::fs::remove_dir_all(dir).ok();
     }
@@ -646,13 +652,16 @@ mod tests {
     }
 
     #[test]
-    fn the_library_is_not_asked_for_ever() {
+    fn the_library_is_asked_often_at_first_and_then_now_and_then() {
         let (tx, _events) = mpsc::unbounded_channel();
         let mut reader = Reader::new(tx);
         let start = Instant::now();
         let report = decode(&fixture()[0]).expect("valid");
-        let asked = (0..200u32).filter(|&second| reader.handle(&report, start + Duration::from_secs(second.into())).is_some()).count();
-        assert_eq!(asked, usize::from(LOOKUP_ATTEMPTS));
+        let asked = |reader: &mut Reader, seconds: std::ops::Range<u64>| {
+            seconds.filter(|&second| reader.handle(&report, start + Duration::from_secs(second)).is_some()).count()
+        };
+        assert_eq!(asked(&mut reader, 0..57), 19, "every 3 s for the first minute");
+        assert_eq!(asked(&mut reader, 57..657), 20, "then every 30 s, for as long as the track is loaded");
     }
 
     #[test]

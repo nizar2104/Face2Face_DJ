@@ -6,7 +6,7 @@ members = ["crates/face2face-core", "app/src-tauri"]
 default-members = ["crates/face2face-core"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 publish = false
 

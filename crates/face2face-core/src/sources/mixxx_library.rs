@@ -2,9 +2,16 @@
 //!
 //! The mapping script reports a deck's length and tempo, but not which track
 //! it is. Mixxx's library database (`mixxxdb.sqlite`) knows every track's
-//! length, so the track is found by its length (and tempo, if two tracks are
-//! equally long). That gives title, artist, album and file, and the waveform
-//! Mixxx itself analysed, stored next to the database in `analysis/<id>`.
+//! length, tempo and key, so the track is found by those. That gives title,
+//! artist, album and file, and the waveform Mixxx itself analysed, stored next
+//! to the database in `analysis/<id>`.
+//!
+//! The length is not always the same on both sides. The library first holds
+//! the length the file's tags claim; the deck reports the length Mixxx
+//! measured when it decoded the file, and Mixxx writes that back to the
+//! library only later. The two differed by 0.03 s for an MP3 seen in use. So
+//! the match takes the track of the right tempo and key whose length is
+//! closest, within [`LENGTH_WINDOW_S`].
 //!
 //! Everything here only reads. The database is opened read-only while Mixxx
 //! runs, which SQLite allows.
@@ -31,8 +38,10 @@ use crate::waveform::synth::build_overview;
 use crate::waveform::{Waveform, BYTES_PER_FRAME, DETAIL_FPS};
 
 const DATABASE: &str = "mixxxdb.sqlite";
-/// The script sends the length in whole milliseconds.
-const LENGTH_TOLERANCE_S: f64 = 0.002;
+/// How far the library's length may be from the deck's (see the module text).
+const LENGTH_WINDOW_S: f64 = 0.15;
+/// Two lengths this close are the same length: the script sends whole milliseconds.
+const SAME_LENGTH_S: f64 = 0.002;
 /// And the tempo in hundredths of a BPM.
 const TEMPO_TOLERANCE: f64 = 0.011;
 /// Mixxx's detail waveform is a few megabytes; anything far beyond is not one.
@@ -67,9 +76,10 @@ pub fn default_dir() -> Option<PathBuf> {
     candidates.into_iter().find(|dir| dir.join(DATABASE).is_file())
 }
 
-/// Finds the track that is `duration_s` long. With several of that length, the
-/// one whose tempo is `bpm`. `None` if there is no such track or no single one.
-pub fn find_track(dir: &Path, duration_s: f64, bpm: f64) -> anyhow::Result<Option<LibraryTrack>> {
+/// Finds the track on a deck that reports this length, tempo (0: unknown) and
+/// key (Mixxx's number, 0: unknown). `None` if no track fits, or if two fit
+/// equally well.
+pub fn find_track(dir: &Path, duration_s: f64, bpm: f64, key: u8) -> anyhow::Result<Option<LibraryTrack>> {
     let database = Connection::open_with_flags(dir.join(DATABASE), OpenFlags::SQLITE_OPEN_READ_ONLY)
         .context("opening Mixxx's library")?;
     database.busy_timeout(Duration::from_millis(500))?;
@@ -80,29 +90,37 @@ pub fn find_track(dir: &Path, duration_s: f64, bpm: f64) -> anyhow::Result<Optio
         album: Option<String>,
         location: String,
         location_id: i64,
-        bpm: Option<f64>,
+        /// How far the library's length is from the deck's.
+        off_by: f64,
     }
+    // A track whose tempo or key the library does not know is not ruled out by it.
     let mut query = database.prepare(
-        "SELECT l.title, l.artist, l.album, t.location, t.id, l.bpm
+        "SELECT l.title, l.artist, l.album, t.location, t.id, ABS(l.duration - ?1)
          FROM library l JOIN track_locations t ON t.id = l.location
-         WHERE l.mixxx_deleted = 0 AND ABS(l.duration - ?1) < ?2",
+         WHERE l.mixxx_deleted = 0 AND ABS(l.duration - ?1) < ?2
+           AND (?3 <= 0 OR l.bpm IS NULL OR l.bpm <= 0 OR ABS(l.bpm - ?3) < ?4)
+           AND (?5 = 0 OR l.key_id IS NULL OR l.key_id = 0 OR l.key_id = ?5)
+         ORDER BY 6",
     )?;
-    let mut rows: Vec<Row> = query
-        .query_map((duration_s, LENGTH_TOLERANCE_S), |row| {
+    let rows: Vec<Row> = query
+        .query_map((duration_s, LENGTH_WINDOW_S, bpm, TEMPO_TOLERANCE, i64::from(key)), |row| {
             Ok(Row {
                 title: row.get(0)?,
                 artist: row.get(1)?,
                 album: row.get(2)?,
                 location: row.get(3)?,
                 location_id: row.get(4)?,
-                bpm: row.get(5)?,
+                off_by: row.get(5)?,
             })
         })?
         .collect::<Result<_, _>>()?;
-    if rows.len() > 1 {
-        rows.retain(|row| row.bpm.is_some_and(|tempo| (tempo - bpm).abs() < TEMPO_TOLERANCE));
-    }
-    let [row] = rows.as_slice() else { return Ok(None) };
+    // The closest length wins, unless the runner-up is just as close.
+    let row = match rows.as_slice() {
+        [] => return Ok(None),
+        [only] => only,
+        [closest, next, ..] if next.off_by - closest.off_by > SAME_LENGTH_S => closest,
+        _ => return Ok(None),
+    };
 
     // Type 1 is the detail waveform, type 2 the overview. The newest wins.
     let analysis: Option<i64> = database
@@ -325,7 +343,7 @@ pub(crate) mod testing {
             .execute_batch(
                 "CREATE TABLE track_locations (id INTEGER PRIMARY KEY, location varchar(512));
                  CREATE TABLE library (id INTEGER PRIMARY KEY, artist, title, album, location INTEGER,
-                                       duration FLOAT, bpm FLOAT, mixxx_deleted INTEGER);
+                                       duration FLOAT, bpm FLOAT, mixxx_deleted INTEGER, key_id INTEGER);
                  CREATE TABLE track_analysis (id INTEGER PRIMARY KEY, track_id INTEGER, type varchar(512));",
             )
             .expect("tables");
@@ -335,7 +353,7 @@ pub(crate) mod testing {
     pub fn add_track(database: &Connection, id: i64, title: Option<&str>, file: &str, duration: f64, bpm: f64) {
         database.execute("INSERT INTO track_locations VALUES (?1, ?2)", (id + 100, file)).expect("inserts");
         database
-            .execute("INSERT INTO library VALUES (?1, 'Mara Voss', ?2, 'Sessions', ?3, ?4, ?5, 0)", (id, title, id + 100, duration, bpm))
+            .execute("INSERT INTO library VALUES (?1, 'Mara Voss', ?2, 'Sessions', ?3, ?4, ?5, 0, 22)", (id, title, id + 100, duration, bpm))
             .expect("inserts");
     }
 }
@@ -393,15 +411,35 @@ mod tests {
         let band = vec![9u8; 882];
         std::fs::write(dir.join("analysis/8"), analysis_file(441.0, &band, &band, &band)).expect("writes");
 
-        let found = find_track(&dir, 372.4004, 0.0).expect("reads").expect("found");
+        let found = find_track(&dir, 372.4004, 0.0, 0).expect("reads").expect("found");
         assert_eq!((found.title.as_str(), found.artist.as_str(), found.album.as_str()), ("Neon Tide", "Mara Voss", "Sessions"));
         assert_eq!(found.file_path, PathBuf::from("/Music/Mara Voss - Neon Tide.flac"));
         assert_eq!(found.waveform.map(|waveform| waveform.frames), Some(150));
 
         // Not analysed yet: found, without a waveform.
-        let other = find_track(&dir, 331.25, 126.0).expect("reads").expect("found");
+        let other = find_track(&dir, 331.25, 126.0, 22).expect("reads").expect("found");
         assert_eq!((other.title.as_str(), other.waveform), ("Glass Garden", None));
-        assert_eq!(find_track(&dir, 100.0, 124.0).expect("reads"), None);
+        assert_eq!(find_track(&dir, 100.0, 124.0, 22).expect("reads"), None);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_length_the_library_has_not_caught_up_with_still_matches() {
+        // Seen in use: the library said 257.593 s (from the file's tags) while
+        // the deck reported the 257.561 s that Mixxx measured.
+        let (dir, database) = library();
+        add_track(&database, 1, Some("Merhaba"), "/a.mp3", 257.593, 123.0);
+        add_track(&database, 2, Some("Longer"), "/b.mp3", 257.9, 123.0);
+        add_track(&database, 3, Some("Other tempo"), "/c.mp3", 257.57, 128.0);
+        database.execute("INSERT INTO library VALUES (4, 'x', 'Other key', '', 104, 257.565, 123.0, 0, 3)", []).expect("inserts");
+        database.execute("INSERT INTO track_locations VALUES (104, '/d.mp3')", []).expect("inserts");
+        let title = |bpm: f64, key: u8| find_track(&dir, 257.561, bpm, key).expect("reads").map(|track| track.title);
+
+        assert_eq!(title(123.0, 22).as_deref(), Some("Merhaba"), "closest of the right tempo and key");
+        assert_eq!(title(123.0, 0).as_deref(), Some("Other key"), "without a key, the closest of that tempo");
+        assert_eq!(title(128.0, 22).as_deref(), Some("Other tempo"));
+        assert_eq!(title(100.0, 22), None, "no track of that tempo near that length");
+        assert_eq!(find_track(&dir, 258.2, 123.0, 22).expect("reads"), None, "too far from any length");
         std::fs::remove_dir_all(dir).ok();
     }
 
@@ -411,12 +449,12 @@ mod tests {
         add_track(&database, 1, Some("Original"), "/a.flac", 300.0, 124.0);
         add_track(&database, 2, Some("Remix"), "/b.flac", 300.0, 128.0);
         add_track(&database, 3, None, "/Music/untagged file.wav", 200.0, 0.0);
-        let title = |bpm: f64| find_track(&dir, 300.0, bpm).expect("reads").map(|track| track.title);
+        let title = |bpm: f64| find_track(&dir, 300.0, bpm, 22).expect("reads").map(|track| track.title);
         assert_eq!(title(128.0).as_deref(), Some("Remix"));
         assert_eq!(title(124.004).as_deref(), Some("Original"));
         assert_eq!(title(0.0), None, "two candidates and no tempo to choose by");
-        // A track without tags is named after its file.
-        assert_eq!(find_track(&dir, 200.0, 0.0).expect("reads").map(|track| track.title).as_deref(), Some("untagged file"));
+        // A track without tags is named after its file; an unknown tempo in the library does not rule it out.
+        assert_eq!(find_track(&dir, 200.0, 120.0, 0).expect("reads").map(|track| track.title).as_deref(), Some("untagged file"));
         // A deleted track is not a candidate.
         database.execute("UPDATE library SET mixxx_deleted = 1 WHERE id = 1", []).expect("updates");
         assert_eq!(title(0.0).as_deref(), Some("Remix"));
@@ -425,6 +463,6 @@ mod tests {
 
     #[test]
     fn a_missing_library_is_an_error_not_a_panic() {
-        assert!(find_track(Path::new("/nonexistent/face2face"), 1.0, 1.0).is_err());
+        assert!(find_track(Path::new("/nonexistent/face2face"), 1.0, 1.0, 0).is_err());
     }
 }
