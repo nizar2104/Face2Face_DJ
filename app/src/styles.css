@@ -99,6 +99,18 @@ code {
   line-height: 14px;
 }
 
+.source-select {
+  height: 16px;
+  padding: 0 2px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 10px;
+  line-height: 14px;
+}
+
 .seg button + button {
   border-left: 0;
 }
@@ -155,6 +167,19 @@ code {
   color: #ffe08a;
 }
 
+.banner-wait {
+  background: var(--panel);
+  color: var(--dim);
+}
+
+.banner-action {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-decoration: underline;
+}
+
 .fullscreen-notice {
   flex: 1;
   display: flex;
@@ -187,6 +212,114 @@ code {
   border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--panel);
+}
+
+/* ---- Partner set-up ---------------------------------------------------- */
+
+.setup {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 0;
+  padding: 0 12px;
+  text-align: center;
+  overflow: auto;
+}
+
+.setup {
+  position: relative;
+}
+
+.setup p {
+  margin: 0;
+}
+
+.setup-home {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 10px;
+}
+
+.setup-home:hover {
+  color: var(--text);
+}
+
+.setup-mine {
+  font-size: 11px;
+  color: var(--dim);
+  /* The address and code are read out or copied to the partner. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.setup-mine b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.setup-row {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+  max-width: 340px;
+}
+
+.setup-row input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.setup-row input.setup-code {
+  flex: 0 0 72px;
+  text-align: center;
+}
+
+.setup-row input:focus {
+  outline: 1px solid var(--dim);
+}
+
+.setup-row .text-button {
+  margin-top: 0;
+}
+
+.setup-problem {
+  color: #ffe08a;
+  font-size: 11px;
+}
+
+.setup-more {
+  display: flex;
+  gap: 12px;
+}
+
+.setup-more button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font-size: 11px;
+  text-decoration: underline;
+}
+
+.setup-more button:hover {
+  color: var(--text);
 }
 
 /* ---- Decks ------------------------------------------------------------- */
@@ -430,6 +563,12 @@ code {
 .brand-logo {
   height: 20px;
   margin-bottom: 2px;
+}
+
+.role-select .version {
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .role-select h1 {

@@ -1,3 +1,5 @@
+import { APP_VERSION } from '../version.ts';
+
 /**
  * 'link' is two-way: this laptop shares its decks and shows the partner's.
  * 'sender' and 'viewer' are the two halves on their own (one-way).
@@ -9,7 +11,7 @@ export function RoleSelect({ onChoose }: { onChoose: (role: Role) => void }) {
   return (
     <div className="role-select">
       <img className="brand-logo" src="/nomad-logo.png" alt="NO-MAD" />
-      <h1>Face2Face DJ</h1>
+      <h1>Face2Face DJ <span className="version" title="Both laptops should run the same version">{APP_VERSION}</span></h1>
       <p>
         Choose <b>Link up</b> on both laptops: each one shares its decks and shows the other's.
       </p>

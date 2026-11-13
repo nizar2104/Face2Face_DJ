@@ -17,6 +17,7 @@ use tokio::time::MissedTickBehavior;
 use super::{DeckSource, DeckStateEvent, SourceEvent, SourceStatus, TrackMeta};
 use crate::lock;
 use crate::protocol::KeyInfo;
+use crate::waveform::synth::{synth_waveform, track_hash};
 
 pub const TICK_HZ: f64 = 60.0;
 pub const MAX_PITCH_PERCENT: f64 = 50.0;
@@ -243,8 +244,10 @@ impl MockEngine {
             if self.master == Some(deck) {
                 self.master = self.first_playing();
             }
-            let mut events =
-                vec![SourceEvent::TrackLoaded { deck, meta: MOCK_LIBRARY[track_index].meta(), file_path: None }];
+            // Mock tracks have no audio, so the mock draws their waveform itself.
+            let meta = MOCK_LIBRARY[track_index].meta();
+            let waveform = synth_waveform(meta.duration_s, meta.bpm_original, track_hash(&meta.artist, &meta.title));
+            let mut events = vec![SourceEvent::TrackLoaded { deck, meta, file_path: None, waveform: Some(waveform) }];
             events.extend(self.all_states());
             return (events, None);
         }
@@ -623,7 +626,7 @@ mod tests {
         let mut engine = MockEngine::new(2);
         let first = run(&mut engine, "load 1");
         match &first[0] {
-            SourceEvent::TrackLoaded { deck: 1, meta, file_path: None } => assert_eq!(meta.title, "Neon Tide"),
+            SourceEvent::TrackLoaded { deck: 1, meta, file_path: None, waveform: Some(_) } => assert_eq!(meta.title, "Neon Tide"),
             other => panic!("unexpected first event: {other:?}"),
         }
         let state = state_of(&first, 1);

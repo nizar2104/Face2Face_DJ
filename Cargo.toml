@@ -6,6 +6,13 @@ members = ["crates/face2face-core", "app/src-tauri"]
 default-members = ["crates/face2face-core"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.1"
 edition = "2021"
 publish = false
+
+# The coremidi crate (under midir, macOS) reads MIDI packets through pointers
+# that are unaligned on Intel Macs. That works there, but debug builds check
+# pointer alignment and abort the app on the first packet from Mixxx. Seen with
+# coremidi 0.9.2; remove when a release fixes `PacketListIterator::next`.
+[profile.dev.package.coremidi]
+debug-assertions = false

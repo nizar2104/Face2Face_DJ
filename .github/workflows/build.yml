@@ -1,0 +1,105 @@
+# Builds the apps people download, and runs the tests on each system first.
+# The files are attached to the run as artifacts (Actions tab > the run >
+# Artifacts): "face2face-dj-windows" and "face2face-dj-macos".
+#
+# Runs for every pull request, and by hand from the Actions tab once this file
+# is on the default branch. Nothing is code-signed with a paid certificate:
+# Windows shows a SmartScreen warning the first time ("More info" > "Run
+# anyway"), macOS refuses a double-click the first time (right-click > Open).
+name: Build
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+      - run: npm test
+      - run: cargo test
+      # Runs the Mixxx set-up script against a stand-in for Mixxx's settings
+      # folder, with the Windows PowerShell that a double-click uses. The
+      # loopMIDI step needs a person, so it is skipped.
+      - name: Test the Mixxx set-up script
+        shell: powershell
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'Mixxx'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $cfg = Join-Path $dir 'mixxx.cfg'
+          [System.IO.File]::WriteAllText($cfg, "[Master]`nnum_decks 2`n`n[Controller]`nOther_Device 1`n")
+          foreach ($run in 1, 2) {
+            & tools/mixxx-mapping/Setup-Mixxx-Windows.ps1 -SettingsDir $dir -SkipLoopMidi
+            if ($LASTEXITCODE) { throw "the script failed on run $run" }
+          }
+          $lines = [System.IO.File]::ReadAllLines($cfg)
+          $lines
+          $bytes = [System.IO.File]::ReadAllBytes($cfg)
+          if ($bytes[0] -ne 0x5B) { throw 'the settings file no longer starts with "[" (a byte-order mark?)' }
+          if (@($lines -eq 'Face2Face_DJ 1').Count -ne 1) { throw 'the controller is not switched on exactly once' }
+          $preset = @($lines -like 'Face2Face_DJ *controllers/Face2Face-DJ.midi.xml')
+          if ($preset.Count -ne 1 -or $preset[0].Contains('\')) { throw 'the mapping path is missing, doubled or has backslashes' }
+          if ($lines.IndexOf('[ControllerPreset]') -lt 0) { throw 'no [ControllerPreset] section' }
+          if (-not ($lines -contains 'Other_Device 1') -or -not ($lines -contains 'num_decks 2')) { throw 'existing settings were lost' }
+          foreach ($file in 'controllers/Face2Face-DJ.midi.xml', 'controllers/Face2Face-DJ.js', 'mixxx.cfg.before-face2face') {
+            if (-not (Test-Path (Join-Path $dir $file))) { throw "missing $file" }
+          }
+          if ((Get-Content (Join-Path $dir 'mixxx.cfg.before-face2face') -Raw) -match 'Face2Face') { throw 'the backup is not the original' }
+      # The installer (NSIS) also installs Microsoft's WebView2 if the PC lacks it.
+      - run: npm run tauri -- build --bundles nsis
+      - name: Collect the files to hand out
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force 'windows/Mixxx set-up' | Out-Null
+          Copy-Item target/release/bundle/nsis/*.exe windows/
+          Copy-Item target/release/face2face-dj.exe windows/
+          Copy-Item tools/mixxx-mapping/Face2Face-DJ.midi.xml, tools/mixxx-mapping/Face2Face-DJ.js, tools/mixxx-mapping/Setup-Mixxx-Windows.ps1, 'tools/mixxx-mapping/Setup Mixxx (Windows).cmd' 'windows/Mixxx set-up/'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: face2face-dj-windows
+          if-no-files-found: error
+          path: windows/
+
+  # GitHub's macOS machines are Apple Silicon, so the tests run on one. The app
+  # itself is built for both Apple Silicon and Intel, in one file.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: uname -m
+      - run: npm ci
+      - run: npm test
+      - run: cargo test
+      - run: npm run tauri -- build --target universal-apple-darwin --bundles dmg
+      - name: Check the app holds both architectures
+        # The program that goes into the app. (The app folder itself is
+        # removed again once the disk image is made.)
+        run: |
+          archs=$(lipo -archs target/universal-apple-darwin/release/face2face-dj)
+          echo "$archs"
+          [[ "$archs" == *arm64* && "$archs" == *x86_64* ]]
+      - uses: actions/upload-artifact@v4
+        with:
+          name: face2face-dj-macos
+          if-no-files-found: error
+          path: target/universal-apple-darwin/release/bundle/dmg/*.dmg
+

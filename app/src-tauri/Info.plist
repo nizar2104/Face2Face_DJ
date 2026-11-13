@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged into the macOS app bundle. Linking connects to the partner's
+	     laptop by its address on the local network, over plain ws://. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Face2Face DJ connects to your partner's laptop on the local network to show their decks.</string>
+	<!-- A covered or minimised window must not slow the Sender's timers:
+	     the partner's Viewer calls the link lost after 3 s of silence. -->
+	<key>NSAppSleepDisabled</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

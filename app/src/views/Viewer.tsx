@@ -3,6 +3,7 @@ import { DeckCard } from '../components/DeckCard.tsx';
 import { StatusBar } from '../components/StatusBar.tsx';
 import { useStoreVersion } from '../hooks.ts';
 import { ViewerConnection } from '../net/connection.ts';
+import { isLocalUrl } from '../pairing.ts';
 import { useSettings } from '../settings.ts';
 import type { Layout } from '../settings.ts';
 import { ViewerStore } from '../state/store.ts';
@@ -46,12 +47,16 @@ function decksToShow(store: ViewerStore, layout: Layout): number[] {
 interface Props {
   /** ws:// address of the Sender. */
   senderUrl: string;
+  /** The Sender's pairing code, if it needs one. */
+  pairCode?: string;
+  /** Opens the partner set-up (address and code), where there is one. */
+  onSetUp?: () => void;
   /** Linked (two-way): the Sender is the partner's laptop, which also views this one. */
   partner?: boolean;
   onSwitchRole?: () => void;
 }
 
-export function Viewer({ senderUrl, partner = false, onSwitchRole }: Props) {
+export function Viewer({ senderUrl, pairCode, partner = false, onSwitchRole, onSetUp }: Props) {
   const [store] = useState(() => new ViewerStore());
   const [settings, updateSettings] = useSettings();
   useStoreVersion(store);
@@ -63,32 +68,43 @@ export function Viewer({ senderUrl, partner = false, onSwitchRole }: Props) {
       name: 'Face2Face DJ Viewer',
       appVersion: APP_VERSION,
       os: osName(),
+      pairCode,
     });
     conn.start();
     return () => conn.stop();
-  }, [store, senderUrl]);
+  }, [store, senderUrl, pairCode]);
 
-  const bar = <StatusBar store={store} settings={settings} onChange={updateSettings} onSwitchRole={onSwitchRole} />;
+  const bar = (
+    <StatusBar
+      store={store}
+      settings={settings}
+      remote={!isLocalUrl(senderUrl)}
+      onChange={updateSettings}
+      onSwitchRole={onSwitchRole}
+      onSetUp={onSetUp}
+    />
+  );
+  // The Sender turned us away: retrying will not help until the code is corrected.
+  const refused = store.error?.code === 'pairing_failed';
 
-  if (!store.everConnected) {
-    return (
-      <div className="viewer">
-        {bar}
-        <div className="fullscreen-notice">
-          <p className="notice-title">Waiting for {partner ? 'your partner' : 'computer 1'}</p>
-          <p className="notice-detail">{store.error !== null ? store.error.message : `Looking for ${partner ? 'your partner' : 'a Sender'} at ${senderUrl.replace(/^ws:\/\//, '')}…`}</p>
-        </div>
-      </div>
-    );
-  }
-
-  const stale = store.connection !== 'connected';
+  // The decks are on screen from the start, empty until the Sender fills them:
+  // the window looks the same before and after linking, and the wait is a banner.
+  const waiting = !store.everConnected;
+  const stale = !waiting && store.connection !== 'connected';
   const decks = decksToShow(store, settings.layout);
+  const who = partner ? 'your partner' : 'a Sender';
+  const waitingFor = store.error !== null ? store.error.message : `Waiting for ${who} at ${senderUrl.replace(/^ws:\/\//, '')}…`;
   return (
     <div className={`viewer${stale ? ' viewer-stale' : ''}`}>
       {bar}
-      {stale && <div className="banner">Disconnected – showing last known. Reconnecting…</div>}
-      {!stale && store.error !== null && <div className="banner banner-warn">{store.error.message}</div>}
+      {waiting && (
+        <div className={`banner ${store.error !== null ? 'banner-warn' : 'banner-wait'}`}>
+          {waitingFor}
+          {onSetUp && <button className="banner-action" onClick={onSetUp}>{refused ? 'Correct the code' : 'Partner set-up'}</button>}
+        </div>
+      )}
+      {stale && <div className="banner">{refused ? store.error!.message : 'Disconnected – showing last known. Reconnecting…'}</div>}
+      {!waiting && !stale && store.error !== null && <div className="banner banner-warn">{store.error.message}</div>}
       {!stale && store.source !== null && !store.source.connected && (
         <div className="banner banner-warn">Connected – DJ software not detected</div>
       )}

@@ -77,6 +77,9 @@ pub enum Message {
         role: Role,
         app_version: String,
         os: String,
+        /// Viewer to Sender: the Sender's pairing code, when it has one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pair_code: Option<String>,
     },
     SourceStatus {
         software: String,

@@ -2,15 +2,18 @@
 //! (brief 7.6). JSON text frames carry control and state, binary frames carry
 //! waveform chunks. See `docs/PROTOCOL.md` for the handshake.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{Sink, SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinSet;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message as WsMessage};
 
+use crate::net::pairing::Pairing;
 use crate::protocol::{Message, Role, PROTOCOL_VERSION};
 use crate::session::{Frame, Session};
 
@@ -18,6 +21,14 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
 /// A frame that cannot be written for this long means the Viewer is gone.
 const SEND_TIMEOUT: Duration = Duration::from_secs(5);
+/// A Viewer pings every 2 s. One that has sent nothing for this long has
+/// vanished without closing (laptop asleep, cable pulled): heartbeats would
+/// keep fitting in the system's buffers for minutes, and the Sender would go
+/// on saying "partner connected".
+const VIEWER_SILENCE_LIMIT: Duration = Duration::from_secs(7);
+/// Viewers send short JSON only (hello, ping). The library's default limit of
+/// 64 MiB would apply to peers that have not even presented a pairing code.
+const MAX_VIEWER_MESSAGE: usize = 64 * 1024;
 
 /// How this Sender introduces itself in `hello`.
 #[derive(Debug, Clone)]
@@ -30,7 +41,13 @@ pub struct SenderIdentity {
 
 /// Accepts Viewers until the task is aborted. Aborting it also closes every
 /// Viewer connection, because they live in the `JoinSet` owned by this future.
-pub async fn serve(listener: TcpListener, session: Arc<Session>, identity: Arc<SenderIdentity>) {
+/// With `pairing`, a Viewer must present the code in its `hello`.
+pub async fn serve(
+    listener: TcpListener,
+    session: Arc<Session>,
+    identity: Arc<SenderIdentity>,
+    pairing: Option<Arc<Pairing>>,
+) {
     let mut connections = JoinSet::new();
     loop {
         tokio::select! {
@@ -38,8 +55,9 @@ pub async fn serve(listener: TcpListener, session: Arc<Session>, identity: Arc<S
                 Ok((stream, peer)) => {
                     let session = Arc::clone(&session);
                     let identity = Arc::clone(&identity);
+                    let pairing = pairing.clone();
                     connections.spawn(async move {
-                        if let Err(error) = handle_viewer(stream, session, identity).await {
+                        if let Err(error) = handle_viewer(stream, peer, session, identity, pairing).await {
                             tracing::debug!("viewer {peer} dropped: {error:#}");
                         }
                     });
@@ -87,13 +105,35 @@ where
     send(sink, message).await
 }
 
+/// Tells the Viewer why it is turned away, and closes.
+async fn refuse<S>(sink: &mut S, code: &str, message: String) -> anyhow::Result<()>
+where
+    S: Sink<WsMessage, Error = WsError> + Unpin,
+{
+    send_json(sink, &Message::Error { code: code.to_string(), message }).await?;
+    let _ = sink.close().await;
+    Ok(())
+}
+
 async fn handle_viewer(
     stream: TcpStream,
+    peer: SocketAddr,
     session: Arc<Session>,
     identity: Arc<SenderIdentity>,
+    pairing: Option<Arc<Pairing>>,
 ) -> anyhow::Result<()> {
     stream.set_nodelay(true)?;
-    let websocket = tokio_tungstenite::accept_async(stream).await?;
+    let limits = WebSocketConfig {
+        max_message_size: Some(MAX_VIEWER_MESSAGE),
+        max_frame_size: Some(MAX_VIEWER_MESSAGE),
+        ..WebSocketConfig::default()
+    };
+    // A peer that connects and then says nothing must not hold a task for ever.
+    let handshake = tokio_tungstenite::accept_async_with_config(stream, Some(limits));
+    let Ok(websocket) = tokio::time::timeout(HELLO_TIMEOUT, handshake).await else {
+        anyhow::bail!("no WebSocket handshake within {HELLO_TIMEOUT:?}");
+    };
+    let websocket = websocket?;
     let (mut sink, mut incoming) = websocket.split();
 
     // 1. Wait for the Viewer's hello. Pings are answered even before it.
@@ -109,15 +149,25 @@ async fn handle_viewer(
                         Some(Message::Ping { t_viewer }) => {
                             send_json(&mut sink, &Message::Pong { t_viewer, t_sender: session.now() }).await?;
                         }
-                        Some(Message::Hello { protocol, role: Role::Viewer, name, .. }) => {
+                        Some(Message::Hello { protocol, role: Role::Viewer, name, pair_code, .. }) => {
                             if protocol != PROTOCOL_VERSION {
-                                let refusal = Message::Error {
-                                    code: "protocol_mismatch".to_string(),
-                                    message: format!("Sender speaks protocol {PROTOCOL_VERSION}, Viewer sent {protocol}."),
+                                let message = format!("Sender speaks protocol {PROTOCOL_VERSION}, Viewer sent {protocol}.");
+                                return refuse(&mut sink, "protocol_mismatch", message).await;
+                            }
+                            if let Some(pairing) = &pairing {
+                                // Guessing is kept slow: each attempt waits its turn (net::pairing).
+                                let paired = match pairing.take_turn(peer.ip(), Instant::now()) {
+                                    Some(turn) => {
+                                        tokio::time::sleep_until(turn.into()).await;
+                                        pairing.check(peer.ip(), pair_code.as_deref())
+                                    }
+                                    None => false,
                                 };
-                                send_json(&mut sink, &refusal).await?;
-                                let _ = sink.close().await;
-                                return Ok(());
+                                if !paired {
+                                    tracing::warn!("viewer {peer} ({name}) sent a wrong pairing code");
+                                    let message = "Wrong pairing code. Check the code shown on your partner's laptop.";
+                                    return refuse(&mut sink, "pairing_failed", message.to_string()).await;
+                                }
                             }
                             break name;
                         }
@@ -138,6 +188,7 @@ async fn handle_viewer(
         role: Role::Sender,
         app_version: identity.app_version.clone(),
         os: identity.os.clone(),
+        pair_code: None,
     };
     send_json(&mut sink, &hello).await?;
     let (snapshot, mut live) = session.subscribe();
@@ -149,8 +200,11 @@ async fn handle_viewer(
 
     // 3. Stream: live frames out, pings in, a heartbeat every second.
     let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
+    let silence = tokio::time::sleep(VIEWER_SILENCE_LIMIT);
+    tokio::pin!(silence);
     loop {
         tokio::select! {
+            _ = &mut silence => anyhow::bail!("viewer silent for {VIEWER_SILENCE_LIMIT:?}"),
             frame = live.recv() => match frame {
                 Ok(frame) => send_frame(&mut sink, frame).await?,
                 Err(RecvError::Lagged(missed)) => anyhow::bail!("viewer fell {missed} frames behind"),
@@ -158,6 +212,7 @@ async fn handle_viewer(
             },
             next = incoming.next() => {
                 let Some(next) = next else { return Ok(()) };
+                silence.as_mut().reset(tokio::time::Instant::now() + VIEWER_SILENCE_LIMIT);
                 match next? {
                     WsMessage::Text(text) => {
                         if let Some(Message::Ping { t_viewer }) = Message::parse(text.as_str()) {

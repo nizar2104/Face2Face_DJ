@@ -15,6 +15,12 @@ export const PING_INTERVAL_S = 2;
 /** Quick pings right after connecting, so the clock settles fast. */
 export const PING_BURST = 5;
 export const PING_BURST_INTERVAL_S = 0.15;
+/**
+ * How long a connection attempt may take. Without a limit, a partner laptop
+ * that is off or behind a firewall leaves the attempt to the operating
+ * system, which gives up after 20 to 75 s instead of our 0.5 to 5 s retries.
+ */
+export const CONNECT_TIMEOUT_S = 4;
 
 export interface ConnectionOptions {
   url: string;
@@ -22,6 +28,10 @@ export interface ConnectionOptions {
   name: string;
   appVersion: string;
   os: string;
+  /** The Sender's pairing code, if it needs one (a Sender on another laptop does). */
+  pairCode?: string;
+  /** Overrides CONNECT_TIMEOUT_S (tests). */
+  connectTimeoutS?: number;
   /** Viewer monotonic clock in seconds. Must be the same clock the store uses. */
   now?: () => number;
 }
@@ -40,6 +50,7 @@ export class ViewerConnection {
   private reconnectTimer: Timer | null = null;
   private pingTimer: Timer | null = null;
   private staleTimer: Timer | null = null;
+  private connectTimer: Timer | null = null;
 
   constructor(store: ViewerStore, opts: ConnectionOptions) {
     this.store = store;
@@ -71,6 +82,9 @@ export class ViewerConnection {
     }
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
+    this.connectTimer = setTimeout(() => {
+      if (this.ws === ws && ws.readyState === WebSocket.CONNECTING) this.dropped();
+    }, (this.opts.connectTimeoutS ?? CONNECT_TIMEOUT_S) * 1000);
 
     ws.onopen = () => {
       if (this.ws !== ws) return;
@@ -83,6 +97,7 @@ export class ViewerConnection {
         role: 'viewer',
         app_version: this.opts.appVersion,
         os: this.opts.os,
+        ...(this.opts.pairCode !== undefined ? { pair_code: this.opts.pairCode } : {}),
       };
       ws.send(JSON.stringify(hello));
       this.staleTimer = setInterval(() => this.checkStale(), 1000);
@@ -135,6 +150,15 @@ export class ViewerConnection {
       case 'ping':
       case 'heartbeat':
         return;
+      case 'error':
+        this.store.handleMessage(msg);
+        // The same code would be refused again, and each wrong attempt makes
+        // the Sender slower to answer: stop until the user corrects it.
+        if (msg.code === 'pairing_failed') {
+          this.stop();
+          this.store.setConnection(this.store.everConnected ? 'disconnected' : 'connecting');
+        }
+        return;
       default:
         this.store.handleMessage(msg);
     }
@@ -164,6 +188,8 @@ export class ViewerConnection {
   private teardown(): void {
     if (this.pingTimer !== null) clearTimeout(this.pingTimer);
     if (this.staleTimer !== null) clearInterval(this.staleTimer);
+    if (this.connectTimer !== null) clearTimeout(this.connectTimer);
+    this.connectTimer = null;
     this.pingTimer = null;
     this.staleTimer = null;
     const ws = this.ws;

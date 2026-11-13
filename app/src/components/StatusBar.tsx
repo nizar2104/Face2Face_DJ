@@ -5,8 +5,12 @@ import type { ViewerStore } from '../state/store.ts';
 interface Props {
   store: ViewerStore;
   settings: Settings;
+  /** The Sender is on another computer. */
+  remote?: boolean;
   onChange: (patch: Partial<Settings>) => void;
   onSwitchRole?: () => void;
+  /** Opens the partner set-up, where there is one. */
+  onSetUp?: () => void;
 }
 
 const LAYOUTS: { value: Layout; label: string; title: string }[] = [
@@ -16,7 +20,7 @@ const LAYOUTS: { value: Layout; label: string; title: string }[] = [
   { value: '4', label: '4', title: 'Layout: 4 decks' },
 ];
 
-export function StatusBar({ store, settings, onChange, onSwitchRole }: Props) {
+export function StatusBar({ store, settings, remote = false, onChange, onSwitchRole, onSetUp }: Props) {
   const connected = store.connection === 'connected';
   const latency = store.clock.latencyMs;
   const source = store.source;
@@ -51,16 +55,21 @@ export function StatusBar({ store, settings, onChange, onSwitchRole }: Props) {
         >
           {settings.notation === 'camelot' ? '8A' : 'Am'}
         </button>
+        {onSetUp && (
+          <button className="seg-single" title="Partner set-up: address and pairing code" onClick={onSetUp}>
+            Partner
+          </button>
+        )}
         {onSwitchRole && (
           <button className="seg-single" title="Back to the start screen" onClick={onSwitchRole}>
-            ⇄
+            Home
           </button>
         )}
       </span>
       <span className={`link ${connected ? 'link-up' : 'link-down'}`}>
         <span className="dot">●</span>
-        {/* Milestone 0 only ever connects over localhost; cable / Wi-Fi detection is Milestone 1. */}
-        {connected ? ` Local ${latency !== null ? `${latency.toFixed(1)} ms` : '…'}` : ' Offline'}
+        {/* "Local" is a Sender on this computer. Telling cable from Wi-Fi is still to come. */}
+        {connected ? ` ${remote ? 'Network' : 'Local'} ${latency !== null ? `${latency.toFixed(1)} ms` : '…'}` : ' Offline'}
       </span>
     </header>
   );

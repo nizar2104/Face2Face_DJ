@@ -29,7 +29,9 @@ export function DeckCard({ store, deck, notation, zoomS }: Props) {
     if (el === null) return;
     const model = store.decks.get(deck);
     const pos = store.position(deck);
-    const text = model?.track != null && pos !== null ? formatRemaining(model.track.duration_s, pos) : '--:--';
+    // A length of 0 means the source does not know it (docs/PROTOCOL.md, 3.3).
+    const known = model?.track != null && model.track.duration_s > 0 && pos !== null;
+    const text = known ? formatRemaining(model.track!.duration_s, pos) : '--:--';
     if (el.textContent !== text) el.textContent = text;
   });
 

@@ -30,25 +30,30 @@ How it works, briefly:
   ping/pong round trips and extrapolates each deck's position between updates, so
   the waveform scrolls smoothly and stays in time with the real deck.
 - **Read-only by design.** It never writes to a DJ library or to music files.
-- **Planned sources:** Rekordbox (via rkbx_link) and Traktor. Milestone 0 uses mock
-  decks with synthetic waveforms.
+- **Sources:** mock decks with synthetic waveforms, and readers for Traktor,
+  rekordbox (via rkbx_link), Pro DJ Link players (CDJ, XDJ) and Mixxx. The readers
+  are new and not yet tried against the real programs: [`docs/SOURCES.md`](docs/SOURCES.md).
 
 Built with Tauri 2: a Rust core (protocol, deck sources, waveforms, networking)
 and a TypeScript + React UI drawing on Canvas 2D. Design decisions are logged in
 [`docs/DECISIONS.md`](docs/DECISIONS.md). The project's working name was *Tandem*.
 
-## Status: Milestone 0 (foundations, one computer)
+## Status: Milestone 0 (foundations), plus deck readers and two-laptop linking
 
-Mock decks and synthetic waveforms only. No Rekordbox, Traktor, audio files,
-discovery or pairing yet; the Sender listens on localhost only, so a linked pair
-is two windows on the same computer for now.
+Two laptops can link over a network with an address and a pairing code
+([`docs/SETUP.md`](docs/SETUP.md)); finding the partner automatically is not
+built. Real decks can be read (below), but show no waveform until audio
+analysis exists. No audio files are read yet.
 
 | Part | State |
 |---|---|
 | Viewer UI, clock sync, interpolation, reconnect (TypeScript) | Built and tested |
 | Mock sender tool (TypeScript) | Built and tested |
 | Rust core (`crates/face2face-core`) | Built and tested (`cargo test`) |
-| Desktop app (`app/src-tauri`), including two linked windows | Built and run on Linux. Not yet tried on macOS or Windows |
+| Desktop app (`app/src-tauri`), including two linked windows | Run on an Intel Mac and on Windows, linked to each other. Apple Silicon: built (one app for both Mac kinds) and the tests pass on an Apple Silicon machine, but the app itself has not been run on one |
+| Linking two laptops: address + pairing code (`net/pairing.rs`, `app/src/pairing.ts`) | Built and tested; run between a Mac and a Windows PC on one Wi-Fi |
+| Readers: Traktor, rekordbox, Pro DJ Link, Mixxx (`crates/face2face-core/src/sources`) | Mixxx: run for real (Mixxx 2.5.6 on a Mac, seen on a Windows PC). The others: tested with hand-built messages only |
+| Downloads | Every pull request builds a Windows installer and a macOS disk image (`.github/workflows/build.yml`); neither is code-signed |
 
 ![Viewer with two mock decks](docs/screenshots/viewer-two-decks.png)
 
@@ -59,6 +64,7 @@ is two windows on the same computer for now.
 - Node.js 22.18 or newer, with npm.
 - For the desktop app: Rust (stable, 1.77.2 or newer) and the Tauri 2
   prerequisites for your OS: https://tauri.app/start/prerequisites/
+  On Linux also the ALSA development package (`libasound2-dev`), for MIDI.
 
 ## Run it
 
@@ -85,9 +91,13 @@ cargo test              # Rust core tests
 npm run tauri dev       # opens the Face2Face DJ window
 ```
 
-**Two-way, both DJs see each other.** Choose **Link up** in the window, then start a
-second copy of the app and choose **Link up** there too. While `tauri dev` runs,
-the second copy is the program it built:
+**Two laptops.** Put both on one network, choose **Link up** on both, and type
+each other's address and pairing code, which each window shows. The full guide,
+including how to create the network, is [`docs/SETUP.md`](docs/SETUP.md).
+
+**Two-way on one computer.** Choose **Link up** in the window, then **My partner
+is on this computer**. Start a second copy of the app and do the same there.
+While `tauri dev` runs, the second copy is the program it built:
 
 ```sh
 ./target/debug/face2face-dj          # Windows: target\debug\face2face-dj.exe
@@ -98,9 +108,19 @@ decks. The first to link is "Laptop A" (port 47801), the second "Laptop B" (port
 47802); they load different mock tracks so you can tell them apart. The top row
 of buttons controls your own mock decks, which the *other* window displays.
 
+**Your real decks.** The menu at the left of the Sender window's control row
+chooses where your decks come from: mock decks, Traktor, rekordbox, Pro DJ Link
+or Mixxx. Each needs something set up on the DJ software's side first; see
+[`docs/SOURCES.md`](docs/SOURCES.md). To try a reader without the window:
+
+```sh
+cargo run --example sender -- traktor     # then `npm run dev`, open http://localhost:1420, "View only"
+```
+
 **One-way.** **Share only** starts the Sender and previews what a partner would
-see. For a viewer of it, open http://localhost:1420 in a browser while `tauri dev`
-runs and choose **View only**.
+see; its top bar shows the address and pairing code a viewer needs. For a viewer
+on the same computer, open http://localhost:1420 in a browser while `tauri dev`
+runs, choose **View only**, press **Partner**, and enter `127.0.0.1` and that code.
 
 ## Check it
 
@@ -114,24 +134,35 @@ cargo test              # Rust unit + integration tests
 ## Layout
 
 ```
-docs/                 PROJECT_BRIEF, DECISIONS, PROTOCOL, screenshots, brand (logo)
+docs/                 PROJECT_BRIEF, DECISIONS, PROTOCOL, SETUP, SOURCES, screenshots, brand (logo)
 app/                  the desktop app
   src/                UI (TypeScript, React)
     protocol/         wire messages and binary waveform chunks
     net/              clock sync, interpolation, WebSocket connection
     state/            Viewer state and waveform cache
     waveform/         canvas drawing
-    views/            RoleSelect, Viewer, Sender
+    views/            RoleSelect, Viewer, Sender, PartnerSetup
     components/       DeckCard, WaveformView, StatusBar, KeyBadge
   src-tauri/          Tauri shell: commands that call face2face-core
-crates/face2face-core/  Rust core: protocol, sources (mock), waveform (synthetic),
-                        session, net (transport), sender
+crates/face2face-core/  Rust core: protocol, sources (mock, traktor, rekordbox, prolink,
+                        mixxx), waveform (synthetic), session, net (transport), sender
+  examples/sender.rs    a Sender without a window, for trying a reader
 tools/mock-sender/    stand-in Sender for developing the Viewer
+tools/mixxx-mapping/  the controller mapping to install in Mixxx
 test-assets/          fixtures shared by the TypeScript and Rust tests
 ```
 
 ## Safety rules that already apply
 
 Face2Face DJ never writes to a DJ library or to music files (brief, section 12).
-Milestone 0 reads and writes nothing outside this folder and the browser's or
-webview's own local storage (three display settings and a device id).
+It reads and writes nothing outside this folder and the browser's or webview's
+own local storage: three display settings, a device id, this laptop's pairing
+code, and the partner's address and code.
+
+On the network: the Sender accepts connections from other computers only with
+this laptop's pairing code ([`docs/SETUP.md`](docs/SETUP.md) says what the code
+does and does not protect). The deck readers only receive: Traktor's,
+rekordbox's and Mixxx's listen on this computer for what a helper sends them.
+The Pro DJ Link reader is the one that transmits: it announces itself on the
+players' network and asks players for track names, as any player on that
+network does.
